@@ -8,12 +8,13 @@ from sklearn.model_selection import StratifiedKFold
 
 
 outcomes = ['IntracranialHemorrhage', 'IschemicStroke', 'Dementia', 'MCI+Dementia', 'Atrial_Fibrillation', 'Myocardial_Infarction', 'DiabetesII', 'Hypertension', 'Bipolar_Disorder', 'Depression']#TODO, 'Death']
-features = ['SleepEfficiency', 'NREMPercTST']#REMPercTST
+features_ = ['SleepEfficiency', 'NREMPercTST']#REMPercTST
+features = ['none']+features_
 covs = ['Age', 'Sex', 'Race', 'BMI', 'MedBenzo', 'MedAntiDep', 'MedSedative', 'MedAntiEplipetic', 'MedStimulant']
 
 df1 = pd.read_excel('../sleep-outcome-prediction/mastersheet_outcome_deid.xlsx')
 df2 = pd.read_csv('../sleep-outcome-prediction/to_be_used_features_NREM_deid.csv')
-df  = df1.merge(df2[['HashID']+features],on='HashID',how='left',validate='1:1')
+df  = df1.merge(df2[['HashID']+features_],on='HashID',how='left',validate='1:1')
 
 df.loc[pd.isna(df.Race), 'Race'] = 'Other'
 df = df[np.in1d(df.Race, ['White', 'Black', 'Other', 'Hispanic', 'Asian'])].reset_index(drop=True)
@@ -32,10 +33,14 @@ res = np.zeros((len(outcomes), len(features)))
 for outcome, feature in product(outcomes, features):
     print(outcome, feature)
     if outcome=='Death':
-        cols = [feature]+covs+[f'time_{outcome}', f'cens_{outcome}']
+        cols = covs+[f'time_{outcome}', f'cens_{outcome}']
+        if feature!='none':
+            cols.append(feature)
         df2 = df[cols]
     else:
-        cols = [feature]+covs+[f'time_{outcome}', f'cens_{outcome}','time_Death', 'cens_Death']
+        cols = covs+[f'time_{outcome}', f'cens_{outcome}','time_Death', 'cens_Death']
+        if feature!='none':
+            cols.append(feature)
         df2 = df[cols]
         df2 = df2.rename(columns={f'time_{outcome}':'time_outcome', f'cens_{outcome}':'cens_outcome'})
     ids = df2.time_outcome>0
@@ -114,7 +119,6 @@ write.csv(cindex_te, '{output_r_path}')
 
     res[outcomes.index(outcome), features.index(feature)] = perf
 
-import pdb;pdb.set_trace()
 df_res = pd.DataFrame(data=res, columns=features,index=outcomes)
 df_res.to_csv(f'macrostructure_outcome_perf_future2.csv')
 
