@@ -53,6 +53,7 @@ ids0 = matched_ids0
 print(ttest_ind(df.Age[ids0].values, df.Age[ids1].values))
 print(ttest_ind(df.BMI[ids0].values, df.BMI[ids1].values))
 
+import pdb;pdb.set_trace()
 df.loc[ids0, y_col] = 0
 df.loc[ids1, y_col] = 1
 df = df.dropna(subset=y_col).reset_index(drop=True)
