@@ -1,4 +1,4 @@
-from itertools import product
+from itertools import product, groupby
 from collections import defaultdict
 import datetime
 import os
@@ -13,12 +13,17 @@ import mne
 import h5py
 
 
-def prepare_data(folder_path, ch_names=None, load_data=True):
+def prepare_data(folder_path, ch_names=None, load_data=True, df_annot=None):
     # read annotations file
-    annot_folder = r'dropbox_mgh:/BDSP_engineering/new_redacted_annotations'
-    annot_path = os.path.join(annot_folder, folder_path, folder_path+'_annotations.csv')
-    output = subprocess.check_output(['rclone', 'cat', annot_path]).decode()
-    annot = pd.read_csv(StringIO(output))
+    if df_annot is None:  # read from dropbox
+        annot_folder = r'dropbox_mgh:/BDSP_engineering/new_redacted_annotations'
+        annot_path = os.path.join(annot_folder, folder_path, folder_path+'_annotations.csv')
+        output = subprocess.check_output(['rclone', 'cat', annot_path]).decode()
+        annot = pd.read_csv(StringIO(output))
+    else:
+        hashid, dov1, dov2 = folder_path.split('_')
+        dov1 = datetime.datetime.strptime(dov1, '%Y%m%d')
+        annot = df_annot[(df_annot.HashID==hashid)&(df_annot.DOVshifted==dov1)].reset_index(drop=True)
 
     # read signals file
     signal_folder = r'/sbgenomics/project-files/bdsp-opendata-repository/PSG/data/S0001'
@@ -54,7 +59,7 @@ def prepare_data(folder_path, ch_names=None, load_data=True):
     sleep_stages = np.zeros(T)+np.nan
     epoch_time = 30  # [second]
     epoch_size = int(round(epoch_time*Fs))
-    sleep_epoch_start_ids = []
+    epoch_start_ids = []
     for i in range(len(annot)):
         res = re.match(pattern, annot.event.iloc[i])
         if not res:
@@ -68,9 +73,9 @@ def prepare_data(folder_path, ch_names=None, load_data=True):
             end   = start + epoch_size
             if 0<=start<end<=len(sleep_stages):
                 sleep_stages[start:end] = stage
-                sleep_epoch_start_ids.append(start)
+                epoch_start_ids.append(start)
 
-    params = {'Fs':Fs, 'start_time':start_time, 'ch_names':subset_ch_names, 'sleep_epoch_start_ids':sleep_epoch_start_ids}
+    params = {'Fs':Fs, 'start_time':start_time, 'ch_names':subset_ch_names, 'epoch_start_ids':np.array(epoch_start_ids)}
     return signals, sleep_stages, params
 
 
@@ -81,8 +86,62 @@ def preprocess_EEG(signals, Fs):
     return signals
 
 
-def get_features(signals, Fs, epoch_start_ids, thresholds):
+def removal_artifact_epochs(signals, epoch_start_ids, Fs):
+    epoch_size = int(round(30*Fs))
+    epochs = np.array([signals[:,x:x+epoch_size] for x in epoch_start_ids])
+    good_ids = np.all(np.abs(epochs)<300, axis=(1,2))
+    return epoch_start_ids[good_ids]
+
+
+def get_features(signals, Fs, epoch_start_ids, th=0.89, return_internal=False):
     signals_f = mne.filter.filter_data(signals, Fs, 0.5, 2, verbose=False)
+    
+    # compute instantaneous variance explained by SWA    
+    subepoch_size = int(round(2*Fs))+1
+    move_var   = pd.DataFrame(signals.T).rolling(subepoch_size, center=True, min_periods=1).var().values.T
+    move_var_f = pd.DataFrame(signals_f.T).rolling(subepoch_size, center=True, min_periods=1).var().values.T
+    move_var_explained = move_var_f/move_var
+    
+    is_swa = np.zeros_like(signals, dtype=bool)
+    is_swa2 = np.zeros_like(signals, dtype=bool)
+    is_swa3 = np.zeros_like(signals, dtype=bool)
+    for chi in range(len(signals_f)):
+        # find zero-crossing
+        ids_zc_down = np.where((signals_f[chi,:-1]>0)&(signals_f[chi,1:]<0))[0]
+        ids_zc_up   = np.where((signals_f[chi,:-1]<0)&(signals_f[chi,1:]>0))[0]
+        ids_zc = np.sort(np.unique(np.r_[0, ids_zc_down, ids_zc_up, signals.shape[-1]-1]))
+        for i in range(len(ids_zc)-2):
+            #sig_f = signals_f[chi, ids_zc[i]+1:ids_zc[i+2]+1]
+            #sig = signals[chi, ids_zc[i]+1:ids_zc[i+2]+1]
+            ve = move_var_explained[chi, ids_zc[i]+1:ids_zc[i+2]+1].max()
+            if ve>th:#and sig_f.var()/sig.var()>0.5
+                is_swa[chi, ids_zc[i]+1:ids_zc[i+2]+1] = True
+        
+        # fill short gaps and pad 2 seconds
+        len_ = int(round(2*Fs))
+        is_swa2[chi] = is_swa[chi]
+        cc = 0
+        for k,l in groupby(is_swa[chi]):
+            ll = len(list(l))
+            if not k and ll<=len_:
+                is_swa2[chi, cc:cc+ll] = True
+            elif k:
+                is_swa2[chi, max(0,cc-len_):min(is_swa2.shape[1],cc+ll+len_)] = True
+            cc += ll
+        
+        # only keep >75uV
+        cc = 0
+        for k,l in groupby(is_swa2[chi]):
+            ll = len(list(l))
+            if k and signals[chi,cc:cc+ll].max()-signals[chi,cc:cc+ll].min()>75:
+                is_swa3[chi, cc:cc+ll] = True
+            cc += ll
+    
+    epoch_size = int(round(30*Fs))
+    is_swa3 = np.array([is_swa3[:,x:x+epoch_size] for x in epoch_start_ids])
+    swa_perc = is_swa3.mean(axis=-1).min(axis=-1)
+    
+    """
     epoch_size = int(round(30*Fs))
     epochs_f = np.array([signals_f[:,x:x+epoch_size] for x in epoch_start_ids])
     epochs = np.array([signals[:,x:x+epoch_size] for x in epoch_start_ids])
@@ -107,10 +166,16 @@ def get_features(signals, Fs, epoch_start_ids, thresholds):
         for i,j in product(range(mask.shape[0]), range(mask.shape[1])):
             sig = epochs[i,j][mask[i,j]]
             if len(sig)>min_swa_len:
-                lb, ub = np.nanpercentile(sig, (2.5,97.5))
+                lb, ub = np.nanpercentile(sig, (1,99))
                 swa_amp_[i,j] = ub-lb
         swa_amp[th] = np.nanmax(swa_amp_, axis=1)
-    return swa_amp, swa_perc
+    """
+    if return_internal:
+        is_swa2 = np.array([is_swa2[:,x:x+epoch_size] for x in epoch_start_ids])
+        move_var_explained = np.array([move_var_explained[:,x:x+epoch_size] for x in epoch_start_ids])
+        return swa_perc, is_swa2, is_swa3, move_var_explained
+    else:
+        return swa_perc
 
 
 if __name__=='__main__':
@@ -119,49 +184,50 @@ if __name__=='__main__':
 
     df = pd.read_csv(f'../data/mastersheet_matched_{outcome}.csv')
     df['DOVshifted'] = pd.to_datetime(df.DOVshifted)
-
-    """
+    df_annot = pd.read_csv('../data/annotations_sleep_stages.zip', compression='zip')
+    df_annot['DOVshifted'] = pd.to_datetime(df_annot.DOVshifted)
+    
     # get features
-    thresholds = [0.8,0.81,0.82,0.83]
+    """
     df_feat = defaultdict(list)
     for i in tqdm(range(len(df))):
         hashid = df.HashID.iloc[i]
         dov = df.DOVshifted.iloc[i]
-        signals, sleep_stages, params = prepare_data(df.SignalPath.iloc[i].split('/')[-2], ch_names=['F3-M', 'F4-M'])
+        signals, sleep_stages, params = prepare_data(df.SignalPath.iloc[i].split('/')[-2], ch_names=['F3-M', 'F4-M'], df_annot=df_annot)
         Fs = params['Fs']
-        sleep_epoch_start_ids = params['sleep_epoch_start_ids']
-        sleep_stages = sleep_stages[sleep_epoch_start_ids]
+        epoch_start_ids = params['epoch_start_ids']
 
         signals = preprocess_EEG(signals, Fs)
-        swa_amp, swa_perc = get_features(signals, Fs, sleep_epoch_start_ids, thresholds)
+        epoch_start_ids = removal_artifact_epochs(signals, epoch_start_ids, Fs)
+        swa_perc = get_features(signals, Fs, epoch_start_ids)
+        sleep_stages = sleep_stages[epoch_start_ids]
 
         df_feat['HashID'].extend([hashid]*len(sleep_stages))
         df_feat['DOVshifted'].extend([dov]*len(sleep_stages))
-        df_feat['Epoch'].extend(np.arange(len(sleep_stages))+1)
+        df_feat['EpochStartIdx'].extend(epoch_start_ids)
         df_feat['SleepStage'].extend(sleep_stages)
-        for th in thresholds:
-            df_feat[f'SWA_amp_{th}'].extend(swa_amp[th])
-        for th in thresholds:
-            df_feat[f'SWA_perc_{th}'].extend(swa_perc[th])
+        #for th in thresholds:
+        #    df_feat[f'SWA_amp_{th}'].extend(swa_amp[th])
+        #for th in thresholds:
+        #    df_feat[f'SWA_perc_{th}'].extend(swa_perc[th])
+        df_feat['SWA_perc'].extend(swa_perc)
         if i%10==0:
-            pd.DataFrame(data=df_feat).to_csv('SWA_features_different_thresholds.csv', index=False)
+            pd.DataFrame(data=df_feat).to_csv('SWA_features.csv', index=False)
     df_feat = pd.DataFrame(data=df_feat)
-    df_feat.to_csv('SWA_features_different_thresholds.zip',compression='zip',index=False)
+    df_feat.to_csv('SWA_features.zip',compression='zip',index=False)
     """
-    df_feat = pd.read_csv('SWA_features_different_thresholds.zip', compression='zip')
+    df_feat = pd.read_csv('SWA_features.zip', compression='zip')
     df_feat['DOVshifted'] = pd.to_datetime(df_feat.DOVshifted)
     
     #th=0.8;ids1=df_feat[f'SWA_perc_{th}'][df_feat.SleepStage==1].dropna().values;ids0=df_feat[f'SWA_perc_{th}'][df_feat.SleepStage==2].dropna().values;fpr,tpr,tt=roc_curve(np.r_[np.zeros_like(ids0),np.ones_like(ids1)],np.r_[ids0,ids1]);tt[np.argmin(fpr**2+(1-tpr)**2)]
     #plt.close();plt.plot(df_feat['SWA_amp_0.7'][df_feat.SleepStage==2].dropna());plt.ylim(0,200);plt.savefig('0.7_N2.png')
-    
-    thres = 0.82  # by making sure the best separating point is SWA perc=0.2
     
     sids = df[['HashID', 'DOVshifted']]
     X = []
     S = []
     for i in np.arange(len(df)):
         ids = (df_feat.HashID==df.HashID.iloc[i])&(df_feat.DOVshifted==df.DOVshifted.iloc[i])
-        X.append(df_feat[[f'SWA_amp_{thres}', f'SWA_perc_{thres}']][ids].fillna(0).values)
+        X.append(df_feat[['SWA_perc']][ids].values)
         S.append(df_feat['SleepStage'][ids].values)
     #Lnames = ['Age', 'Sex', 'Race', 'BMI']
     #L = df[Lnames].values  # check NaN
@@ -171,5 +237,5 @@ if __name__=='__main__':
     with open(f'dataset_{outcome}.pickle', 'wb') as ff:
         pickle.dump({
             'sids':sids, 'X':X, 'S':S, 'Y':Y,# 'L':L,
-            'Xnames':['SWA_amp', 'SWA_perc'],# 'Lnames':Lnames,
+            'Xnames':['SWA_perc'],# 'Lnames':Lnames,
             }, ff)

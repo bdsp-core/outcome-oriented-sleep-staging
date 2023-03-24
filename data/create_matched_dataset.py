@@ -53,10 +53,21 @@ ids0 = matched_ids0
 print(ttest_ind(df.Age[ids0].values, df.Age[ids1].values))
 print(ttest_ind(df.BMI[ids0].values, df.BMI[ids1].values))
 
-import pdb;pdb.set_trace()
 df.loc[ids0, y_col] = 0
 df.loc[ids1, y_col] = 1
 df = df.dropna(subset=y_col).reset_index(drop=True)
+
+"""
+df_annot = []
+for i in tqdm(range(len(df))):
+    df2=pd.read_csv(os.path.join(folder,*df.AnnotPath.iloc[i].split('/')[-2:]))
+    df2=df2[df2.event.str.contains('sleep_stage_',case=False)].reset_index(drop=True)
+    df2['HashID']=df.HashID.iloc[i]
+    df2['DOVshifted']=df.DOVshifted.iloc[i]
+    df_annots.append(df2)
+df_annot=pd.concat(df_annots,axis=0,ignore_index=True)
+df_annot.to_csv('annotations_sleep_stages.zip',index=False,compression='zip')
+"""
 
 df = df[[
     'HashID', 'BDSPPatientID', 'DOVshifted', 'Age', 'Sex', 'ESS', 'BMI',
