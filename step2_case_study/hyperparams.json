@@ -1,0 +1,7 @@
+{
+  "batch_size": 16,
+  "max_epoch": 100,
+  "n_MCMC": 1000,
+  "baseline_len": 10,
+  "lr": 0.001
+}
