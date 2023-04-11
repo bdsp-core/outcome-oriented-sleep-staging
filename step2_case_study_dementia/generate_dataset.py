@@ -145,31 +145,9 @@ def get_features(signals, Fs, epoch_start_ids, th=0.89, return_internal=False):
     epoch_size = int(round(30*Fs))
     epochs_f = np.array([signals_f[:,x:x+epoch_size] for x in epoch_start_ids])
     epochs = np.array([signals[:,x:x+epoch_size] for x in epoch_start_ids])
-
-    # compute instantaneous variance explained by SWA
-    subepoch_size = int(round(2*Fs))+1
-    move_var = pd.DataFrame(epochs.reshape(-1,epochs.shape[-1]).T).\
-                rolling(subepoch_size, center=True, min_periods=1).var()\
-                .values.T.reshape(*epochs.shape[:2],-1)
-    move_var_f = pd.DataFrame(epochs_f.reshape(-1,epochs_f.shape[-1]).T).\
-                rolling(subepoch_size, center=True, min_periods=1).var()\
-                .values.T.reshape(*epochs_f.shape[:2],-1)
-    move_var_explained = move_var_f/move_var
-
-    swa_perc = {}
-    swa_amp = {}
-    min_swa_len = int(round(2*Fs))
-    for th in thresholds:
-        mask = move_var_explained>=th
-        swa_perc[th] = mask.mean(axis=-1).max(axis=-1)
-        swa_amp_ = np.zeros(epochs.shape[:2])+np.nan
-        for i,j in product(range(mask.shape[0]), range(mask.shape[1])):
-            sig = epochs[i,j][mask[i,j]]
-            if len(sig)>min_swa_len:
-                lb, ub = np.nanpercentile(sig, (1,99))
-                swa_amp_[i,j] = ub-lb
-        swa_amp[th] = np.nanmax(swa_amp_, axis=1)
     """
+    #idx=np.where(sleep_stages[epoch_start_ids]==1)[0][10];sig2=np.array(epochs[idx,1]);sig2[~is_swa3[idx,1]]=np.nan;plt.close();fig=plt.figure(figsize=(10,4));ax=fig.add_subplot(111);ax.plot(tt,epochs[idx,1],c='k');ax.plot(tt,sig2,c='r');ax.set_ylim(-50,50);ax.set_yticks(np.arange(-50,60,10));ax.set_xlim(0,30);ax.set_xlabel('time (second)');ax.set_ylabel('F4-M1, microvolts');ax.yaxis.grid(True);seaborn.despine();plt.tight_layout();plt.savefig('example_N3_10.png')
+    
     if return_internal:
         is_swa2 = np.array([is_swa2[:,x:x+epoch_size] for x in epoch_start_ids])
         move_var_explained = np.array([move_var_explained[:,x:x+epoch_size] for x in epoch_start_ids])
@@ -219,6 +197,8 @@ if __name__=='__main__':
     df_feat = pd.read_csv('SWA_features.zip', compression='zip')
     df_feat['DOVshifted'] = pd.to_datetime(df_feat.DOVshifted)
     
+    #plt.close();fig=plt.figure(figsize=(4,4));ax=fig.add_subplot(111);ax.plot(fpr,tpr,c='k');ax.plot([0,1],[0,1],'r',ls='--');ax.set_xlim(-0.01,1.01);ax.set_ylim(-0.01,1.01);ax.text(0.99,0.01,f'AUC = {roc_auc_score(stages,swaperc):.2f}', ha='right', va='bottom');ax.scatter([fpr[idx]],[tpr[idx]],c='b',s=50);ax.text(fpr[idx]+0.03,tpr[idx],f'thres = {tt[idx]:.2f}',ha='left',va='top');ax.scatter([fpr[idx2]],[tpr[idx2]],c='b',s=50);ax.text(fpr[idx2]+0.03,tpr[idx2],f'thres = {tt[idx2]:.2f}',ha='left',va='top');ax.set_xlabel('FPR, 1-specificity');ax.set_ylabel('TPR, sensitivity');ax.grid(True);seaborn.despine();plt.tight_layout();plt.savefig('stage_n2n3_vs_swa_perc.png')
+    
     #th=0.8;ids1=df_feat[f'SWA_perc_{th}'][df_feat.SleepStage==1].dropna().values;ids0=df_feat[f'SWA_perc_{th}'][df_feat.SleepStage==2].dropna().values;fpr,tpr,tt=roc_curve(np.r_[np.zeros_like(ids0),np.ones_like(ids1)],np.r_[ids0,ids1]);tt[np.argmin(fpr**2+(1-tpr)**2)]
     #plt.close();plt.plot(df_feat['SWA_amp_0.7'][df_feat.SleepStage==2].dropna());plt.ylim(0,200);plt.savefig('0.7_N2.png')
     
@@ -232,6 +212,7 @@ if __name__=='__main__':
     #Lnames = ['Age', 'Sex', 'Race', 'BMI']
     #L = df[Lnames].values  # check NaN
     Y = df[f'Y_{outcome}'].values
+    import pdb;pdb.set_trace()
     
     # save
     with open(f'dataset_{outcome}.pickle', 'wb') as ff:
