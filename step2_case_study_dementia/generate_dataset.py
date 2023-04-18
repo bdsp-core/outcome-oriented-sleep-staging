@@ -13,7 +13,7 @@ import mne
 import h5py
 
 
-def prepare_data(folder_path, ch_names=None, load_data=True, df_annot=None):
+def load_data(folder_path, ch_names=None, load_data=True, df_annot=None):
     # read annotations file
     if df_annot is None:  # read from dropbox
         annot_folder = r'dropbox_mgh:/BDSP_engineering/new_redacted_annotations'
@@ -49,7 +49,7 @@ def prepare_data(folder_path, ch_names=None, load_data=True, df_annot=None):
             if match_ch_ids is None:
                 signals = signals[()]
             else:
-                signals = signals[:,match_ch_ids]  #TODO assume ascending order
+                signals = np.array([signals[:,x] for x in match_ch_ids]).T
     if load_data:
         signals = signals.T
 
@@ -171,7 +171,7 @@ if __name__=='__main__':
     for i in tqdm(range(len(df))):
         hashid = df.HashID.iloc[i]
         dov = df.DOVshifted.iloc[i]
-        signals, sleep_stages, params = prepare_data(df.SignalPath.iloc[i].split('/')[-2], ch_names=['F3-M', 'F4-M'], df_annot=df_annot)
+        signals, sleep_stages, params = load_data(df.SignalPath.iloc[i].split('/')[-2], ch_names=['F3-M', 'F4-M'], df_annot=df_annot)
         Fs = params['Fs']
         epoch_start_ids = params['epoch_start_ids']
 
