@@ -31,20 +31,17 @@ class MyPlot:
         self.is_event = []
 
     def on_press(self, event):
-        changed = False
         if event.key in ['0', '1'] and len(self.is_event)<len(self.df_detect):
             self.is_event.append(int(event.key))
-            changed = True
-        if changed:
-            self.rowi += 1
-            self.plot(redraw=True)
-            self.fig.canvas.draw()
+            if self.rowi<len(self.df_detect):
+                self.plot(redraw=True)
+                self.fig.canvas.draw()
 
             print(self.is_event)
             df = self.df_detect.copy()
             df = df[:len(self.is_event)]
             df['ManualOK'] = self.is_event
-            path = os.path.join(self.save_folder, f'manual_check_{self.sid}.csv')
+            path = os.path.join(self.save_folder, f'manual_check_{self.event_name}_{self.sid}.csv')
             os.makedirs(self.save_folder, exist_ok=True)
             df.to_csv(path, index=False)
 
@@ -79,6 +76,7 @@ class MyPlot:
         event_end_id   = np.searchsorted(tt_disp, end_time)+1
         event_ch_id = list(self.df_signals.columns).index(event_ch)
         sleep_stage = np.unique(self.sleep_stages[start_idx:end_idx])
+        sleep_stage = sleep_stage[pd.notna(sleep_stage)]
         sleep_stage_txt = ','.join([stage_num2txt[x] for x in sleep_stage])
 
         if self.event_name=='spindle':
@@ -157,11 +155,13 @@ class MyPlot:
         for y in yticks:
             ax.axhline(y, color='k', ls='--', lw=1)
 
+        self.rowi += 1
         if not redraw:
             plt.tight_layout()
             plt.subplots_adjust(hspace=0.04)
             self.fig.canvas.mpl_connect('key_press_event', self.on_press)
             plt.show()
+
 
 
 def load_data(subject_folder, base_folder, ch_names, df_annot=None):
@@ -182,19 +182,6 @@ def filter_signal(signals, Fs, notch_freq, bandpass_freq):
     signals = mne.filter.notch_filter(signals, Fs, notch_freq, verbose=False)
     signals = mne.filter.filter_data(signals, Fs, bandpass_freq[0], bandpass_freq[1], verbose=False)
     return signals
-
-
-def myapplyall(x, m):
-    from itertools import groupby
-    x2 = np.array(x)
-    x2[np.isnan(x2)] = -1
-    x3 = np.zeros_like(x)
-    cc = 0
-    for k,l in groupby(x2):
-        ll = len(list(l))
-        x3[cc:cc+ll] = m.get(k,-1)
-        cc += ll
-    return x3
 
 
 def get_spindle_peak_freq(eeg, sleep_stages, Fs):
@@ -223,6 +210,7 @@ def get_spindle_peak_freq(eeg, sleep_stages, Fs):
         spec_ = spec_db_N2[chi]-freq*slope-intercept
         spec_ = savgol_filter(spec_, 45, 3, mode='nearest')
         peak_id = argrelmax(spec_)[0]
+        peak_id = peak_id[(freq[peak_id]<=freq_range[1])&(freq[peak_id]>=freq_range[0])]
         if len(peak_id)>=1:
             peak_id = peak_id[np.argmax(spec_[peak_id])]
             peak_freq = freq[peak_id]
@@ -246,20 +234,10 @@ def main(pattern):
     df_annot = pd.read_csv('annotations_sleep_stages.zip', compression='zip')
     df_annot['DOVshifted'] = pd.to_datetime(df_annot.DOVshifted)
 
-    """
--2 = Unscored
--1 = Artefact / Movement
-0 = Wake
-1 = N1 sleep
-2 = N2 sleep
-3 = N3 sleep
-4 = REM sleep
-    """
-    yasa_stage_mapping = {5:0,4:4,3:1,2:2,1:3,-1:-1}
-    eeg_ch_names = ['f3-m2', 'f4-m1', 'c3-m2', 'c4-m1', 'o1-m2', 'o2-m1']
+    eeg_ch_names = ['f3-m2', 'f4-m1', 'c3-m2', 'c4-m1']#, 'o1-m2', 'o2-m1']
     eog_ch_names = ['e1-m2', 'e2-m1']
     ch_names = eeg_ch_names + eog_ch_names
-    eeg_ch_names_re = ['f3-', 'f4-', 'c3-', 'c4-', 'o1-', 'o2-']
+    eeg_ch_names_re = ['f3-', 'f4-', 'c3-', 'c4-']#, 'o1-', 'o2-']
     eog_ch_names_re = ['e1-', 'e2-']
     ch_names_re = eeg_ch_names_re + eog_ch_names_re
 
@@ -274,30 +252,42 @@ def main(pattern):
         eeg = filter_signal(eeg, Fs, 60, [0.3, 35])
         eog = filter_signal(eog, Fs, 60, [0.3, 35])
 
-        # convert to yasa stage encoding
-        sleep_stages2 = myapplyall(sleep_stages, yasa_stage_mapping)
-
         if pattern=='spindle':
+            sig = pd.DataFrame(data=eeg.T, columns=eeg_ch_names)
             spindle_peak_freq = get_spindle_peak_freq(eeg, sleep_stages, Fs)
             print(spindle_peak_freq)
             spindle_peak_freq[np.isnan(spindle_peak_freq)] = np.nanmedian(spindle_peak_freq)
             res = []
             for chi in range(len(eeg)):
                 res_ = yasa.spindles_detect( eeg[[chi]], sf=Fs, ch_names=[eeg_ch_names[chi]],
-                    hypno=sleep_stages2, include=[2], freq_sp=[spindle_peak_freq[chi]-1,spindle_peak_freq[chi]+1], freq_broad=[1,30],
+                    hypno=sleep_stages, include=[2], freq_sp=[spindle_peak_freq[chi]-1,spindle_peak_freq[chi]+1], freq_broad=[1,30],
                     duration=[0.5,2], min_distance=500,
                     thresh={'corr':0.6, 'rel_pow':0.1, 'rms':1.5},
                     multi_only=False, remove_outliers=False, verbose=False)
+                if res_ is None:
+                    continue
                 res_ = res_.summary()
                 np.random.seed(random_seed+si*1000+chi)
-                res_ = res_.iloc[np.sort(np.random.choice(len(res_), len(res_)//50, replace=False))]
+                Nrand = len(res_)//50 if len(res_)>=500 else min(20,len(res_))
+                res_ = res_.iloc[np.sort(np.random.choice(len(res_), Nrand, replace=False))]
                 res.append( res_ )
-            res = pd.concat(res, axis=0, ignore_index=True)
-            print(res.shape)
+            if len(res)>0:
+                res = pd.concat(res, axis=0, ignore_index=True)
+                print(res.shape)
 
-            sig = pd.DataFrame(data=eeg.T, columns=eeg_ch_names)
-        myplot = MyPlot(subject_folder, pattern, sig, res, Fs, start_time, sleep_stages)
-        myplot.plot()
+        if len(res)>0:
+            myplot = MyPlot(subject_folder, pattern, sig, res, Fs, start_time, sleep_stages)
+            myplot.plot()
+
+    save_folder = myplot.save_folder
+    df_res = []
+    for subject_folder in folders:
+        path = os.path.join(save_folder, f'manual_check_{pattern}_{subject_folder}.csv')
+        df = pd.read_csv(path)
+        df.insert(0, 'SID', subject_folder)
+        df_res.append(df)
+    df_res = pd.concat(df_res, axis=0, ignore_index=True)
+    df_res.to_excel(os.path.join(save_folder, f'manual_check_{pattern}.xlsx'), index=False)
 
 
 if __name__=='__main__':
