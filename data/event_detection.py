@@ -31,6 +31,7 @@ def my_yasa_spindles_detect(data, sf=None, ch_names=None, hypno=None, include=[1
        'Stage', 'Channel', 'IdxChannel']
     res = pd.DataFrame(columns=cols) if res is None else res.summary()
     res = res[res.Amplitude<max_amp].reset_index(drop=True)
+    res['t_standout'] = np.nan
 
     # add t_standout and f_standout
     pad = int(round(2*sf))
@@ -66,10 +67,10 @@ def my_yasa_spindles_detect(data, sf=None, ch_names=None, hypno=None, include=[1
 def main(pattern):
     df_y = pd.read_excel(f'manual_check/manual_check_{pattern}.xlsx')
 
-    eeg_ch_names = ['f3-m2', 'f4-m1', 'c3-m2', 'c4-m1']#, 'o1-m2', 'o2-m1']
+    eeg_ch_names = ['f3-m2', 'f4-m1', 'c3-m2', 'c4-m1', 'o1-m2', 'o2-m1']
     #eog_ch_names = ['e1-m2', 'e2-m1']
     ch_names = eeg_ch_names# + eog_ch_names
-    eeg_ch_names_re = ['f3-', 'f4-', 'c3-', 'c4-']#, 'o1-', 'o2-']
+    eeg_ch_names_re = ['f3-', 'f4-', 'c3-', 'c4-', 'o1-', 'o2-']
     #eog_ch_names_re = ['e1-', 'e2-']
     ch_names_re = eeg_ch_names_re# + eog_ch_names_re
 
@@ -101,7 +102,7 @@ def main(pattern):
                 print(spindle_peak_freq)
                 spindle_peak_freq[np.isnan(spindle_peak_freq)] = np.nanmedian(spindle_peak_freq)
 
-            eegs.append( pd.DataFrame(data=eeg.T, columns=eeg_ch_names) )
+            eegs.append( eeg )
             spindle_peak_freqs.append(spindle_peak_freq)
             sleep_stages_mgh.append(sleep_stages)
 
@@ -109,7 +110,7 @@ def main(pattern):
             pickle.dump({
                 'eegs':eegs, 'spindle_peak_freqs':spindle_peak_freqs,
                 'sids':folders, 'Fs':Fs,
-                'sleep_stages_mgh':sleep_stages_mgh,
+                'sleep_stages_mgh':sleep_stages_mgh, 'channel_names':eeg_ch_names,
                 }, ff)
     else:
         print(f'reading from {tmp_data_path}...')
@@ -120,6 +121,7 @@ def main(pattern):
         folders = res['sids']
         Fs = res['Fs']
         sleep_stages_mgh = res['sleep_stages_mgh']
+        eeg_ch_names = res['channel_names']
 
     # given a parameter set, generate detections
     params = {'corr':[0.6,0.65,0.7],
@@ -139,13 +141,12 @@ def main(pattern):
         y_ = []
         yp_ = []
         for si, subject_folder in enumerate(tqdm(folders)):
-            eeg = eegs[si].values.T
-            eeg_ch_names = list(eegs[si].columns)
+            eeg = eegs[si]
             spindle_peak_freq = spindle_peak_freqs[si]
             sleep_stages = sleep_stages_mgh[si]
 
             detection_mask = np.zeros_like(eeg, dtype=bool)
-            for chi in range(len(eeg)):
+            for chi in range(4):#len(eeg)):
                 res = my_yasa_spindles_detect( eeg[[chi]], sf=Fs, ch_names=[eeg_ch_names[chi]],
                     hypno=sleep_stages, include=[2], freq_sp=[spindle_peak_freq[chi]-1,spindle_peak_freq[chi]+1], freq_broad=[1,30],
                     duration=[0.5,2], min_distance=500,
@@ -182,10 +183,10 @@ def main(pattern):
         df_res['F1'].append(f1)
         df_res['MCC'].append(mcc)
         df_res['CohenKappa'].append(cohenkappa)
-    df_res = pd.DataFrame(df_res)
-    print(df_res)
-    df_res.to_excel('params_performances.xlsx', index=False)
-    import pdb;pdb.set_trace()
+        df_res_ = pd.DataFrame(df_res)
+        #print(df_res_)
+        df_res_.to_excel('params_performances.xlsx', index=False)
+    #import pdb;pdb.set_trace()
 
 
 

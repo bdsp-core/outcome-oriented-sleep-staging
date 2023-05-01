@@ -1,0 +1,8 @@
+- visualize detected spindles
+- validate SW detection
+- validate REM detection
+
+DONE
+- spindles are already validated
+- pytorch based HMM
+- bernoulli emission with threshold as parameter, minimize loss for outcome prediction

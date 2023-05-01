@@ -13,7 +13,7 @@ plt.rcParams.update({'font.size': 11})
 import seaborn as sns
 sns.set_style('ticks')
 import sys
-sys.path.insert(0, '../../sleep_general')
+sys.path.insert(0, '/data/interesting_side_projects/sleep_general')
 from mgh_sleeplab import load_mgh_signal, annotations_preprocess, vectorize_sleep_stages
 
 
@@ -166,7 +166,7 @@ class MyPlot:
 
 def load_data(subject_folder, base_folder, ch_names, df_annot=None):
     # load signal
-    signal_path = os.path.join(base_folder, subject_folder, 'Shifted_signal_'+subject_folder+'.mat')
+    signal_path = os.path.join(base_folder, subject_folder, 'Shifted_Signal_'+subject_folder+'.mat')
     signals, params = load_mgh_signal(signal_path, channels=ch_names)
     # load annotation
     hashid, dov1, dov2 = subject_folder.split('_')
@@ -184,23 +184,15 @@ def filter_signal(signals, Fs, notch_freq, bandpass_freq):
     return signals
 
 
-def get_spindle_peak_freq(eeg, sleep_stages, Fs):
-    freq_range = [11,16]
-    epoch_time = 30  # [second]
-    epoch_size = int(round(epoch_time*Fs))
-    epoch_step = int(round(epoch_time*Fs))
-    start_ids = np.arange(0, eeg.shape[1]-epoch_size+1, epoch_step)
-    N2_ids = np.where(sleep_stages[start_ids]==2)[0]
-    if len(N2_ids)<10:
+def get_spindle_peak_freq(spec, freq, sleep_stages_epochs, freq_range=[11,15]):
+    N2_ids = np.where(sleep_stages_epochs==2)[0]
+    if len(N2_ids)<5:
         #TODO based on age norm
         raise ValueError
-    epochs = np.array([eeg[:,x:x+epoch_size] for x in start_ids])
-    NW = 10
-    bw = 2*NW/epoch_time
-    n_jobs = 8
-    spec, freq = mne.time_frequency.psd_array_multitaper(epochs, Fs,
-            fmin=10, fmax=20, bandwidth=bw, adaptive=False, low_bias=True,
-            normalization='full', output='power', n_jobs=n_jobs, verbose=False)
+        
+    ids = (freq>=10)&(freq<=20)
+    freq = freq[ids]
+    spec = spec[...,ids]
     spec_db = 10*np.log10(spec)
     spec_db_N2 = spec_db[N2_ids].mean(axis=0)
 
@@ -254,7 +246,7 @@ def main(pattern):
 
         if pattern=='spindle':
             sig = pd.DataFrame(data=eeg.T, columns=eeg_ch_names)
-            spindle_peak_freq = get_spindle_peak_freq(eeg, sleep_stages, Fs)
+            spindle_peak_freq = get_spindle_peak_freq(eeg, sleep_stages, Fs)#TODO
             print(spindle_peak_freq)
             spindle_peak_freq[np.isnan(spindle_peak_freq)] = np.nanmedian(spindle_peak_freq)
             res = []
