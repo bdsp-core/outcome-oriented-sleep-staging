@@ -86,9 +86,9 @@ def main():
         model_new = HMMOOSSClassifier(thres_bounds, D, Xnames=Xnames, random_state=random_state, lr=0.01, max_iter=max_iter2, batch_size=batch_size, lr_reduce_patience=lr_reduce_patience, early_stop_patience=early_stop_patience, verbose=False, warm_start_model_folder=warm_start_model_folder)
         model_new = BayesSearchCV(model_new,
                {'n_components':Integer(n_state_range[0], n_state_range[1]),
-                'C_l1': Real(1e-2, 1e1, 'log-uniform'),
+                'C_l1': Real(1e-2, 1e0, 'log-uniform'),
                 'C_Y':  Real(1e0, 1e+2, 'log-uniform'),
-                'C_emission':  Real(1e-3, 1e0, 'log-uniform'),},
+                'C_emission':  Real(1e-2, 1e1, 'log-uniform'),},
             scoring=None, cv=cv_1fold_iter(Xtr), n_points=10, n_iter=50,###
             n_jobs=1, verbose=10, random_state=random_state,
             )

@@ -251,7 +251,7 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
     def _loss(self, H, Y, log_p_X_hmm):
         loss_hmm = self._loss_hmm(log_p_X_hmm) 
         _, loss_Y, reg_l1 = self._loss_Y(H,Y)
-        reg_emission = -th.mean(self.unnormalized_emission_matrix**2)
+        reg_emission = -th.mean((th.sigmoid(self.unnormalized_emission_matrix)-0.5)**2)
         return loss_hmm + loss_Y*self.C_Y  + reg_l1*self.C_l1 + reg_emission*self.C_emission, loss_hmm, loss_Y*self.C_Y, reg_l1*self.C_l1, reg_emission*self.C_emission
         
     def training_step(self, batch, batch_idx):
@@ -469,9 +469,9 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
         y = self.val_output_y
         yp = self.val_output_yp
         auc = roc_auc_score(y,yp)
-        emission_prob = sigmoid(th2np(self.unnormalized_emission_matrix))
-        emission_prob_divergence = np.mean(np.abs(emission_prob-0.5))
-        return auc+emission_prob_divergence
+        #emission_prob = sigmoid(th2np(self.unnormalized_emission_matrix))
+        #emission_prob_divergence = np.mean(np.abs(emission_prob-0.5))
+        return auc#+emission_prob_divergence
     
     #TODO
     def save(self, path, separate=False):

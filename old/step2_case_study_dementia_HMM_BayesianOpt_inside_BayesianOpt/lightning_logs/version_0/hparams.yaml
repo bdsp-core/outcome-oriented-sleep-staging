@@ -1,0 +1,26 @@
+algorithm: viterbi
+batch_size: 8
+early_stop_patient: 10
+lr: 0.01
+lr_reduce_patience: 3
+n_components: !!python/object/apply:numpy.core.multiarray.scalar
+- !!python/object/apply:numpy.dtype
+  args:
+  - i8
+  - false
+  - true
+  state: !!python/tuple
+  - 3
+  - <
+  - null
+  - null
+  - null
+  - -1
+  - -1
+  - 0
+- !!binary |
+  AwAAAAAAAAA=
+n_features: 14
+n_iter: 1
+tol: 0.1
+verbose: false

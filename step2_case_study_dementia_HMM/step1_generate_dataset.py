@@ -48,52 +48,6 @@ def remove_bad_start_end(signals, sleep_stages, Fs, epoch_time):
     return signals, sleep_stages, sleep_stages_epoch, epoch_start_ids
 
 
-def sw_detect(eeg, Fs, ch_names, hypno=None, include=None, freq=[0.5, 2], freq_broad=None, thresh=0.89):
-    # compute instantaneous variance explained by SWA
-    eeg_swa = mne.filter.filter_data(eeg, Fs, freq[0], freq[1], verbose=False)
-    subepoch_size = int(round(2*Fs))+1
-    move_var   = pd.DataFrame(eeg.T).rolling(subepoch_size, center=True, min_periods=1).var().values.T
-    move_var_f = pd.DataFrame(eeg_swa.T).rolling(subepoch_size, center=True, min_periods=1).var().values.T
-    move_var_explained = move_var_f/move_var
-    
-    is_swa = np.zeros_like(eeg, dtype=bool)
-    is_swa2 = np.zeros_like(eeg, dtype=bool)
-    is_swa3 = np.zeros_like(eeg, dtype=bool)
-    df_res = defaultdict(list)
-    for chi in range(len(eeg_swa)):
-        # find zero-crossing
-        ids_zc_down = np.where((eeg_swa[chi,:-1]>0)&(eeg_swa[chi,1:]<0))[0]
-        ids_zc_up   = np.where((eeg_swa[chi,:-1]<0)&(eeg_swa[chi,1:]>0))[0]
-        ids_zc = np.sort(np.unique(np.r_[0, ids_zc_down, ids_zc_up, eeg.shape[-1]-1]))
-        for i in range(len(ids_zc)-2):
-            #sig_f = eeg_swa[chi, ids_zc[i]+1:ids_zc[i+2]+1]
-            #sig = eeg[chi, ids_zc[i]+1:ids_zc[i+2]+1]
-            ve = move_var_explained[chi, ids_zc[i]+1:ids_zc[i+2]+1].max()
-            if 1>ve>swa_thres:#and sig_f.var()/sig.var()>0.5
-                is_swa[chi, ids_zc[i]+1:ids_zc[i+2]+1] = True
-        # fill short gaps <= 2 seconds
-        len_ = int(round(2*Fs))
-        is_swa2[chi] = is_swa[chi]
-        cc = 0
-        for k,l in groupby(is_swa[chi]):
-            ll = len(list(l))
-            if not k and ll<=len_:
-                is_swa2[chi, cc:cc+ll] = True
-            cc += ll
-        
-        cc = 0
-        for k,l in groupby(is_swa2[chi]):
-            ll = len(list(l))
-            if k:
-                df_res['Start'].append(cc/Fs)
-                df_res['End'].append((cc+ll)/Fs)
-                df_res['AmpPTP'].append(eeg[chi,cc:cc+ll].max()-eeg[chi,cc:cc+ll].min())
-            cc += ll
-
-    df_res = pd.DataFrame(df_res)
-    return df_res
-
-
 def get_features(signals, sleep_stages, Fs, epoch_start_ids, epoch_time, n_jobs=1):
     epoch_size = int(round(Fs*epoch_time))
     eeg_ch_names = ['F3-M2', 'F4-M1', 'C3-M2', 'C4-M1', 'O1-M2', 'O2-M1']

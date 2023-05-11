@@ -1,0 +1,60 @@
+C_Y: 100.0
+C_emission: 5.25649788289502
+C_l1: 0.013880439954888687
+Xnames:
+- alpha_rel_bp_F
+- alpha_rel_bp_C
+- alpha_rel_bp_O
+- theta_rel_bp_F
+- theta_rel_bp_C
+- theta_rel_bp_O
+- has_spindle_F
+- has_spindle_C
+- has_spindle_O
+- sw_amp_ptp_F
+- sw_amp_ptp_C
+- sw_amp_ptp_O
+- has_rem
+- emg_env_rank_mean
+batch_size: 8
+early_stop_patience: 10
+lr: 0.01
+lr_reduce_patience: 3
+max_iter: 100
+n_components: 3
+n_features: 14
+random_state: 2023
+thres_bounds: !!python/object/apply:numpy.core.multiarray._reconstruct
+  args:
+  - !!python/name:numpy.ndarray ''
+  - !!python/tuple
+    - 0
+  - !!binary |
+    Yg==
+  state: !!python/tuple
+  - 1
+  - !!python/tuple
+    - 2
+    - 14
+  - !!python/object/apply:numpy.dtype
+    args:
+    - f8
+    - false
+    - true
+    state: !!python/tuple
+    - 3
+    - <
+    - null
+    - null
+    - null
+    - -1
+    - -1
+    - 0
+  - false
+  - !!binary |
+    VQCLDLzOij9BDUDfXEOQPwEGejD+Qog/T+DuCCjKnj+cVpVwcuyhPwlNVzhzMZk/XI/C9Shc3z9c
+    j8L1KFzfP1yPwvUoXN8/AAAAAACAUEAAAAAAAIBPQAAAAAAAAE9AXI/C9Shc3z+cffgMuwLgPz/3
+    QF3Jjs0/rpSFCNHI0T8i1AdPMx/XP5KjT9Gl1tI/azuuHWlR1D/9/IaCD47VP1K4HoXrUeA/Urge
+    hetR4D9SuB6F61HgPwAAAAAAQGlAAAAAAACgZkAAAAAAAGBpQFK4HoXrUeA/0mwxUgJNIUA=
+verbose: false
+warm_start_model_folder: warm_start_models_ok
