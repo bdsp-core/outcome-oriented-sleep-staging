@@ -118,7 +118,7 @@ def my_spindle_detect(signals, sleep_stages, Fs, ch_names, include=None, freq_sp
                 continue
                 
             # 1) Broadband bandpass filter (optional -- careful of lower freq for PAC)
-            data_broad = filter_data(data[i], sf, freq_broad[0], freq_broad[1], method="fir", verbose=0)
+            data_broad = filter_data(data[i], sf, freq_broad[0], freq_broad[1], method="fir", verbose='ERROR')
             # 2) Sigma bandpass filter
             # The width of the transition band is set to 1.5 Hz on each side,
             # meaning that for freq_sp = (12, 15 Hz), the -6 dB points are located at
@@ -126,7 +126,7 @@ def my_spindle_detect(signals, sleep_stages, Fs, ch_names, include=None, freq_sp
             data_sigma = filter_data(
                 data[i], sf, freq_sp[i][0], freq_sp[i][1],
                 l_trans_bandwidth=1.5, h_trans_bandwidth=1.5,
-                method="fir", verbose=0
+                method="fir", verbose='ERROR'
             )
 
             # Hilbert power (to define the instantaneous frequency / power)
@@ -382,6 +382,7 @@ def my_spindle_detect(signals, sleep_stages, Fs, ch_names, include=None, freq_sp
         res = df#res.summary()
         if 'Amplitude' in res.columns:
             res = res[res.Amplitude<150].reset_index(drop=True)
+        res = res.sort_values('Start', ignore_index=True, ascending=True)
         
     if return_precomputed:
         return res, rel_pow_all, mcorr_all, mrms_all
@@ -396,18 +397,17 @@ def my_sw_detect(eeg, sleep_stages, Fs, ch_names, include=None, freq_sw=[0.5, 2]
     
     eeg_f = mne.filter.filter_data(eeg, Fs, freq_sw[0], freq_sw[1], verbose=False)
             
-    #"""
     # compute instantaneous variance explained by SWA
     subepoch_size = int(round(2*Fs))+1
     move_var   = pd.DataFrame(eeg.T).rolling(subepoch_size, center=True, min_periods=1).var().values.T
     move_var_f = pd.DataFrame(eeg_f.T).rolling(subepoch_size, center=True, min_periods=1).var().values.T
     move_var_explained = move_var_f/move_var
-    #"""
     swa_thres = 0.8
+
+    cols = ['Start', 'NegPeak', 'MidCrossing', 'PosPeak', 'End', 'Duration',
+        'ValNegPeak', 'ValPosPeak', 'PTP', 'SlopeNeg1', 'SlopePos', 'SlopeNeg2',
+        'Frequency', 'Stage', 'Channel', 'IdxChannel']
     
-    #is_swa = np.zeros_like(eeg, dtype=bool)
-    #is_swa2 = np.zeros_like(eeg, dtype=bool)
-    #is_swa3 = np.zeros_like(eeg, dtype=bool)
     df_res = defaultdict(list)
     for chi in range(len(eeg_f)):
         # find zero-crossing
@@ -415,8 +415,6 @@ def my_sw_detect(eeg, sleep_stages, Fs, ch_names, include=None, freq_sw=[0.5, 2]
         ids_zc_up   = np.where((eeg_f[chi,:-1]<0)&(eeg_f[chi,1:]>0))[0]
         ids_zc = np.sort(np.unique(np.r_[0, ids_zc_down, ids_zc_up, eeg.shape[-1]-1]))
         for i in range(len(ids_zc)-2):
-            if ids_zc[i] in ids_zc_up:
-                continue
             start = ids_zc[i]+1
             mid = ids_zc[i+1]+1
             end = ids_zc[i+2]+1
@@ -428,13 +426,17 @@ def my_sw_detect(eeg, sleep_stages, Fs, ch_names, include=None, freq_sw=[0.5, 2]
             ptp_ = np.ptp(eeg_f[chi,start:end])
             if ptp_<amp_ptp[0] or ptp_>amp_ptp[1]:
                 continue
-                
             ve = move_var_explained[chi, start:end].max()
             if ve>1 or ve<swa_thres:
                 continue
             
-            neg_wave = eeg_f[chi, start:mid]
-            pos_wave = eeg_f[chi, mid:end]
+            mid_is_rising = ids_zc[i] in ids_zc_down
+            if mid_is_rising:
+                neg_wave = eeg_f[chi, start:mid]
+                pos_wave = eeg_f[chi, mid:end]
+            else:
+                neg_wave = eeg_f[chi, mid:end]
+                pos_wave = eeg_f[chi, start:mid]
             dur_neg_ = len(neg_wave)/Fs
             dur_pos_ = len(pos_wave)/Fs
             if dur_neg_<dur_neg[0] or dur_neg_>dur_neg[1]:
@@ -447,8 +449,12 @@ def my_sw_detect(eeg, sleep_stages, Fs, ch_names, include=None, freq_sw=[0.5, 2]
             local_min_pos = argrelmin(pos_wave)[0]
             if not (len(local_max_neg)==0 and len(local_min_neg)==1 and len(local_max_pos)==1 and len(local_min_pos)==0):
                 continue
-            neg_peak_idx = start+local_min_neg[0]
-            pos_peak_idx = mid+local_max_pos[0]
+            if mid_is_rising:
+                neg_peak_idx = start+local_min_neg[0]
+                pos_peak_idx = mid+local_max_pos[0]
+            else:
+                neg_peak_idx = mid+local_min_neg[0]
+                pos_peak_idx = start+local_max_pos[0]
             neg_peak_amp = eeg_f[chi,neg_peak_idx]
             pos_peak_amp = eeg_f[chi,pos_peak_idx]
             if -neg_peak_amp<amp_neg[0] or -neg_peak_amp>amp_neg[1]:
@@ -458,12 +464,19 @@ def my_sw_detect(eeg, sleep_stages, Fs, ch_names, include=None, freq_sw=[0.5, 2]
             ptp_ = pos_peak_amp-neg_peak_amp
             if ptp_<amp_ptp[0] or ptp_>amp_ptp[1]:
                 continue
-    
+        
             # remove those with high correlation with eye movement
             #corr = np.array([pearsonr(eeg_f[chi,start:end], eog[chi2,start:end])[0] for chi2 in range(len(eog))])
             #corr = np.abs(corr).max()
             #if corr**2>eog_thres:
             #    continue
+
+            if mid_is_rising:
+                df_res['SlopeNeg'].append(np.nan)
+                df_res['SlopePos'].append(ptp_/(pos_peak_idx-neg_peak_idx)*Fs)
+            else:
+                df_res['SlopeNeg'].append(ptp_/(pos_peak_idx-neg_peak_idx)*Fs)
+                df_res['SlopePos'].append(np.nan)
                 
             df_res['Start'].append(start/Fs)
             df_res['NegPeak'].append(neg_peak_idx/Fs)
@@ -474,57 +487,37 @@ def my_sw_detect(eeg, sleep_stages, Fs, ch_names, include=None, freq_sw=[0.5, 2]
             df_res['ValNegPeak'].append(neg_peak_amp)
             df_res['ValPosPeak'].append(pos_peak_amp)
             df_res['PTP'].append(ptp_)
-            df_res['SlopeNeg1'].append(neg_peak_amp/(neg_peak_idx-start)*Fs)
-            df_res['SlopePos'].append(ptp_/(pos_peak_idx-neg_peak_idx)*Fs)
-            df_res['SlopeNeg2'].append(-pos_peak_amp/(end-pos_peak_idx)*Fs)
             df_res['Frequency'].append(1/df_res['Duration'][-1])
             df_res['Stage'].append(stage_)
             df_res['Channel'].append(ch_names[chi])
             df_res['IdxChannel'].append(chi)
-        """
-        # fill short gaps <= 2 seconds
-        len_ = int(round(2*Fs))
-        is_swa2[chi] = is_swa[chi]
-        cc = 0
-        for k,l in groupby(is_swa[chi]):
-            ll = len(list(l))
-            if not k and ll<=len_:
-                is_swa2[chi, cc:cc+ll] = True
-            cc += ll
-        
-        cc = 0
-        for k,l in groupby(is_swa2[chi]):
-            ll = len(list(l))
-            if k:
-                df_res['Start'].append(cc/Fs)
-                df_res['End'].append((cc+ll)/Fs)
-                df_res['AmpPTP'].append(eeg[chi,cc:cc+ll].max()-eeg[chi,cc:cc+ll].min())
-            cc += ll
-        """
+
 
     if len(df_res)==0:
-        cols = ['Start', 'NegPeak', 'MidCrossing', 'PosPeak', 'End', 'Duration',
-            'ValNegPeak', 'ValPosPeak', 'PTP', 'SlopeNeg1', 'SlopePos', 'SlopeNeg2',
-            'Frequency', 'Stage', 'Channel', 'IdxChannel']
         return pd.DataFrame(columns=cols)
     else:
-        return pd.DataFrame(df_res)
+        df_res = pd.DataFrame(df_res)
+        df_res = df_res[cols]
+        df_res = df_res.sort_values('Start', ignore_index=True, ascending=True)
+        return df_res
 
 
 def my_rem_detect(loc, roc, sleep_stages, Fs, ch_name, include=None, amplitude=[50,325], duration=[0.3,1.2], freq_rem=[0.5,5], verbose=False):
+    cols = ['Start', 'Peak', 'End', 'Duration', 'LOCAbsValPeak', 'ROCAbsValPeak',
+       'LOCAbsRiseSlope', 'ROCAbsRiseSlope', 'LOCAbsFallSlope',
+       'ROCAbsFallSlope', 'Stage', 'Channel', 'IdxChannel']
     res = yasa.rem_detect(loc, roc, Fs,
             hypno=sleep_stages, include=include,
             amplitude=amplitude, duration=duration,
             freq_rem=freq_rem, remove_outliers=False,
             verbose='INFO' if verbose else 'ERROR')
     if res is None:
-        cols = ['Start', 'Peak', 'End', 'Duration', 'LOCAbsValPeak', 'ROCAbsValPeak',
-           'LOCAbsRiseSlope', 'ROCAbsRiseSlope', 'LOCAbsFallSlope',
-           'ROCAbsFallSlope', 'Stage', 'Channel', 'IdxChannel']
         return pd.DataFrame(columns=cols)
     else:
         res = res.summary()
         res['Channel'] = ch_name
         res['IdxChannel'] = 0
+        res = res[cols]
+        res = res.sort_values('Start', ignore_index=True, ascending=True)
         return res
         

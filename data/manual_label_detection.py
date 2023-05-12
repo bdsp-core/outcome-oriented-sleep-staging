@@ -9,7 +9,7 @@ plt.rcParams.update({'font.size': 11})
 import seaborn as sns
 sns.set_style('ticks')
 import sys
-sys.path.insert(0, '/data/interesting_side_projects/sleep_general')
+sys.path.insert(0, '/home/ubuntu/sleep_general')
 from mgh_sleeplab import load_mgh_signal, annotations_preprocess, vectorize_sleep_stages
 sys.path.insert(0, '..')
 from pattern_detection import get_spindle_peak_freq, my_spindle_detect, my_sw_detect, my_rem_detect
