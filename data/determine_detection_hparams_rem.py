@@ -1,5 +1,3 @@
-#from collections import defaultdict
-#from itertools import product
 import os
 import pickle
 import re
@@ -7,18 +5,23 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from tqdm import tqdm
+from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import confusion_matrix, f1_score, matthews_corrcoef, cohen_kappa_score
 from skopt import gp_minimize
+from skopt.utils import cook_initial_point_generator
 import sys
 sys.path.insert(0, '..')
-from pattern_detection import my_sw_detect
+from pattern_detection import my_rem_detect
 
 
 def main():
     ch_names = ['e1-m2', 'e2-m1']
     ch_names_re = ['e1-', 'e2-']
+
+    metric = 'f1'
+    random_state = 2023
     
-    # get eogs
+    # get eegs
 
     tmp_data_path = 'event_detection_tmp_eog_data.pickle'
     if not os.path.exists(tmp_data_path):
@@ -52,9 +55,8 @@ def main():
 
         with open(tmp_data_path, 'wb') as ff:
             pickle.dump({
-                'eogs':eogs, 'sleep_stages_mgh':sleep_stages_mgh,
-                'sids':folders, 'Fs':Fs,
-                'channel_names':ch_names,
+                'eogs':eogs, 'sids':folders, 'Fs':Fs,
+                'sleep_stages_mgh':sleep_stages_mgh, 'channel_names':ch_names,
                 }, ff)
     else:
         print(f'reading from {tmp_data_path}...')
@@ -65,26 +67,44 @@ def main():
         Fs = res['Fs']
         sleep_stages_mgh = res['sleep_stages_mgh']
 
-
-    metric = 'f1'
-    
     def get_y_yp(si, params):
         subject_folder = folders[si]
         eog = eogs[si]
         sleep_stages = sleep_stages_mgh[si]
 
-        amp_lb, amp_int, dur_lb, dur_int = params
-        amp_ub = amp_lb+amp_int
-        dur_ub = dur_lb+dur_int
-
-        res = my_sw_detect(eog[0], eog[1], sleep_stages, Fs, ch_names, include=[1,2,4],
-            amplitude=[amp_lb, amp_ub], duration=[dur_lb, dur_ub], freq_rem=[0.5,5], verbose=False)
+        res = my_rem_detect(eog[0], eog[1], sleep_stages, Fs, ch_names, include=[1,2,4],
+            amplitude=[amp_lb, amp_lb+amp_int],
+            duration=[dur_lb, dur_lb+dur_int],
+            freq_rem=[0.5,5],
+            verbose=False)
         #TODO
 
+        for ri in range(len(res)):
+            start_idx = int(round(res.Start[ri]*Fs))
+            end_idx = int(round(res.End[ri]*Fs))
+            chi = res.IdxChannel[ri]
+            detection_mask[chi,start_idx:end_idx] = True
+
+        yp = []
+        y = []
+        df_y_ = df_y[df_y.SID==subject_folder].reset_index(drop=True)
+        for yi in range(len(df_y_)):
+            start_idx = int(round(df_y_.Start[yi]*Fs))
+            end_idx = int(round(df_y_.End[yi]*Fs))
+            chi = eeg_ch_names.index(df_y_.Channel[yi])
+            yp.append( int(detection_mask[chi,start_idx:end_idx].any()) )
+        y.extend(df_y_.ManualOK)
+        
+        #res = res[np.in1d(res.Stage, [3,4,5])].reset_index(drop=True)
+        #yp.extend([1]*len(res))
+        #y.extend([0]*len(res))
+        
         return y, yp
         
-    def loss_func(params, return_y_yp=False):
-        res = Parallel(n_jobs=16)(delayed(get_y_yp)(si, params) for si in range(len(folders)))
+    def loss_func(params, return_y_yp=False, use_ids=None):
+        if use_ids is None:
+            use_ids = range(len(folders))
+        res = Parallel(n_jobs=16)(delayed(get_y_yp)(si, params) for si in use_ids)
         y = np.concatenate([x[0] for x in res])
         yp = np.concatenate([x[1] for x in res])
                 
@@ -100,49 +120,72 @@ def main():
         else:
             return -perf
         
+    df_y = pd.read_excel('manual_check/manual_check_rem.xlsx')
+    df_y = df_y[np.in1d(df_y.Channel, ch_names)].reset_index(drop=True)
+    
     # given a parameter set, generate detections
-    """
-    df0 = pd.read_excel('params_performances_spindle.xlsx')
-    df0 = df0[
-            (df0['corr']>=0.6)&(df0['corr']<=0.8)&\
-            (df0['rel_pow']>=0)&(df0['rel_pow']<=0.2)&\
-            (df0['rms']>=1)&(df0['rms']<=2)].reset_index(drop=True)
-    x0 = df0.iloc[:,:3].values.tolist()
-    y0 = (-df0.iloc[:,3].values).tolist()
-    """
 
-    #TODO cross validation
-    random_state = 2023
-    opt_res = gp_minimize(loss_func, [
-        (30,80), # amp_lb
-        (150,350), # amp_int
-        (0.1,1),   # dur_lb
-        (0.4,1),   # dur_int
-        ],
-        n_calls=100, n_initial_points=20, initial_point_generator='lhs',
-        #x0=x0, y0=y0,
-        random_state=random_state, verbose=10, callback=None, n_jobs=1)
-    loss, y, yp = loss_func(opt_res.x, return_y_yp=True)
-    """
-    """
+    Ncv = 5
+    cv = StratifiedKFold(n_splits=Ncv, shuffle=True, random_state=random_state)
+    sids_y = np.array([df_y.ManualOK[df_y.SID==sid].mean()>0.15 for sid in folders]).astype(int)
+    _ = np.zeros((len(folders),1))
+    loss_cv = []
+    y_cv = []
+    yp_cv = []
+    param_cv = []
+    for cvi, (ids_tr, ids_te) in enumerate(cv.split(_, sids_y)):
+        print(f'\n================= CV = {cvi+1}/{Ncv} ==================\n')
 
+        loss_func_ = lambda x:loss_func(x, return_y_yp=False, use_ids=ids_tr)
+        opt_res = gp_minimize(loss_func_, [
+            (),  #TODO amp_lb
+            (),  # amp_int
+            (),  # dur_lb
+            (),  # dur_int
+            ],
+            n_calls=50, n_initial_points=10,
+            initial_point_generator=cook_initial_point_generator("lhs", criterion="maximin"),
+            #x0=x0, y0=y0,
+            random_state=random_state, verbose=10, callback=lambda x:print(x.x), n_jobs=1)
+        loss, y, yp = loss_func(opt_res.x, return_y_yp=True, use_ids=ids_te)
+        print(loss)
+        loss_cv.append(loss)
+        y_cv.append(y)
+        yp_cv.append(yp)
+        param_cv.append(opt_res.x)
+    import pdb;pdb.set_trace()
+
+    param_cv = np.array(param_cv)
+    loss_cv = np.array(loss_cv)
+
+    cm_cv = confusion_matrix(np.concatenate(y_cv), np.concatenate(yp_cv))
+    f1_cv1 = f1_score(np.concatenate(y_cv), np.concatenate(yp_cv))
+    f1_cv2 = np.mean([f1_score(y_cv[i], yp_cv[i]) for i in range(Ncv)])
+    mcc_cv1 = matthews_corrcoef(np.concatenate(y_cv), np.concatenate(yp_cv))
+    mcc_cv2 = np.mean([matthews_corrcoef(y_cv[i], yp_cv[i]) for i in range(Ncv)])
+    cohenkappa_cv1 = cohen_kappa_score(np.concatenate(y_cv), np.concatenate(yp_cv))
+    cohenkappa_cv2 = np.mean([cohen_kappa_score(y_cv[i], yp_cv[i]) for i in range(Ncv)])
+    print('CV')
+    print(np.c_[param_cv, loss_cv])
+    print(cm_cv)
+    print(f'f1  = {f1_cv1}, {f1_cv2}')
+    print(f'mcc = {mcc_cv1}, {mcc_cv2}')
+    print(f'k   = {cohenkappa_cv1}, {cohenkappa_cv2}')
+
+    params_refit = np.sum(param_cv*loss_cv.reshape(-1,1),axis=0)/loss_cv.sum()#np.median(param_cv, axis=0)
+    loss, y, yp = loss_func(params_refit, return_y_yp=True)
     cm = confusion_matrix(y, yp)
-    f1 = f1_score(y,yp)
-    mcc = matthews_corrcoef(y,yp)
-    cohenkappa = cohen_kappa_score(y,yp)
-    print(opt_res.x)
+    f1 = f1_score(y, yp)
+    mcc = matthews_corrcoef(y, yp)
+    cohenkappa = cohen_kappa_score(y, yp)
+    print('refit')
+    print(params_refit)
     print(cm)
     print(f'f1  = {f1}')
     print(f'mcc = {mcc}')
     print(f'k   = {cohenkappa}')
-    
-    df_res = pd.DataFrame(data=np.array(opt_res.x_iters), columns=['amp_lb', 'amp_int','dur_lb', 'dur_int'])
-    col = 'Performance_'+metric
-    df_res[col] = -opt_res.func_vals
-    df_res = df_res.sort_values(col, ignore_index=True, ascending=False)
-    print(df_res)
-    df_res.to_excel('params_performances_rem.xlsx', index=False)
-
+    """
+    """
 
 
 if __name__=='__main__':

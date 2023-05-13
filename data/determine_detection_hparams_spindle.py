@@ -1,5 +1,3 @@
-#from collections import defaultdict
-#from itertools import product
 import os
 import pickle
 import re
@@ -7,8 +5,10 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from tqdm import tqdm
+from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import confusion_matrix, f1_score, matthews_corrcoef, cohen_kappa_score
 from skopt import gp_minimize
+from skopt.utils import cook_initial_point_generator
 import sys
 sys.path.insert(0, '..')
 from pattern_detection import my_spindle_detect
@@ -21,9 +21,9 @@ def main():
     eeg_ch_names_re = ['f3-', 'f4-', 'c3-', 'c4-']#, 'o1-', 'o2-']
     #eog_ch_names_re = ['e1-', 'e2-']
     ch_names_re = eeg_ch_names_re# + eog_ch_names_re
-    
-    df_y = pd.read_excel('manual_check/manual_check_spindle.xlsx')
-    df_y = df_y[np.in1d(df_y.Channel, eeg_ch_names)].reset_index(drop=True)
+
+    metric = 'f1'
+    random_state = 2023
     
     # get eegs
 
@@ -103,9 +103,6 @@ def main():
         Fs = res['Fs']
         sleep_stages_mgh = res['sleep_stages_mgh']
 
-
-    metric = 'f1'
-    
     def get_y_yp(si, params):
         subject_folder = folders[si]
         rel_pow_ = rel_pow[si]
@@ -145,8 +142,10 @@ def main():
         
         return y, yp
         
-    def loss_func(params, return_y_yp=False):
-        res = Parallel(n_jobs=16)(delayed(get_y_yp)(si, params) for si in range(len(folders)))
+    def loss_func(params, return_y_yp=False, use_ids=None):
+        if use_ids is None:
+            use_ids = range(len(folders))
+        res = Parallel(n_jobs=16)(delayed(get_y_yp)(si, params) for si in use_ids)
         y = np.concatenate([x[0] for x in res])
         yp = np.concatenate([x[1] for x in res])
                 
@@ -162,6 +161,9 @@ def main():
         else:
             return -perf
         
+    df_y = pd.read_excel('manual_check/manual_check_spindle.xlsx')
+    df_y = df_y[np.in1d(df_y.Channel, eeg_ch_names)].reset_index(drop=True)
+    
     # given a parameter set, generate detections
     """
     df0 = pd.read_excel('params_performances_spindle.xlsx')
@@ -173,49 +175,99 @@ def main():
     y0 = (-df0.iloc[:,3].values).tolist()
     """
 
-    #TODO cross validation
-    random_state = 2023
-    opt_res = gp_minimize(loss_func, [
-        (0.6,0.8), # corr
-        (0,0.2), # rel_pow
-        (1,2),   # rms
-        ],
-        n_calls=100, n_initial_points=10, initial_point_generator='lhs',
-        #x0=x0, y0=y0,
-        random_state=random_state, verbose=10, callback=None, n_jobs=1)
-    loss, y, yp = loss_func(opt_res.x, return_y_yp=True)
-    """
-    [0.7435733226818443, 0.10547567810873365, 1.2]
-    [[775 113]
-     [124 215]]
-    f1  = 0.6446776611694153
-    mcc = 0.5122340331562704
-    k   = 0.5121026802567006
+    Ncv = 5
+    cv = StratifiedKFold(n_splits=Ncv, shuffle=True, random_state=random_state)
+    sids_y = np.array([df_y.ManualOK[df_y.SID==sid].mean()>0.15 for sid in folders]).astype(int)
+    _ = np.zeros((len(folders),1))
+    loss_cv = []
+    y_cv = []
+    yp_cv = []
+    param_cv = []
+    for cvi, (ids_tr, ids_te) in enumerate(cv.split(_, sids_y)):
+        print(f'\n================= CV = {cvi+1}/{Ncv} ==================\n')
 
-    ===> [0.75,0.11,1.2]
-    [[789,  99],
-     [135, 204]]
-    f1  = 0.6355140186915887
-    mcc = 0.5083891150613703
-    k   = 0.5069242658423493
-    """
+        loss_func_ = lambda x:loss_func(x, return_y_yp=False, use_ids=ids_tr)
+        opt_res = gp_minimize(loss_func_, [
+            (0.6,0.8), # corr
+            (0,0.4), # rel_pow
+            (0.,3.),   # rms
+            ],
+            n_calls=50, n_initial_points=10,
+            initial_point_generator=cook_initial_point_generator("lhs", criterion="maximin"),
+            #x0=x0, y0=y0,
+            random_state=random_state, verbose=10, callback=lambda x:print(x.x), n_jobs=1)
+        loss, y, yp = loss_func(opt_res.x, return_y_yp=True, use_ids=ids_te)
+        print(loss)
+        loss_cv.append(loss)
+        y_cv.append(y)
+        yp_cv.append(yp)
+        param_cv.append(opt_res.x)
+    import pdb;pdb.set_trace()
 
+    param_cv = np.array(param_cv)
+    loss_cv = np.array(loss_cv)
+
+    cm_cv = confusion_matrix(np.concatenate(y_cv), np.concatenate(yp_cv))
+    f1_cv1 = f1_score(np.concatenate(y_cv), np.concatenate(yp_cv))
+    f1_cv2 = np.mean([f1_score(y_cv[i], yp_cv[i]) for i in range(Ncv)])
+    mcc_cv1 = matthews_corrcoef(np.concatenate(y_cv), np.concatenate(yp_cv))
+    mcc_cv2 = np.mean([matthews_corrcoef(y_cv[i], yp_cv[i]) for i in range(Ncv)])
+    cohenkappa_cv1 = cohen_kappa_score(np.concatenate(y_cv), np.concatenate(yp_cv))
+    cohenkappa_cv2 = np.mean([cohen_kappa_score(y_cv[i], yp_cv[i]) for i in range(Ncv)])
+    print('CV')
+    print(np.c_[param_cv, loss_cv])
+    print(cm_cv)
+    print(f'f1  = {f1_cv1}, {f1_cv2}')
+    print(f'mcc = {mcc_cv1}, {mcc_cv2}')
+    print(f'k   = {cohenkappa_cv1}, {cohenkappa_cv2}')
+
+    params_refit = np.sum(param_cv*loss_cv.reshape(-1,1),axis=0)/loss_cv.sum()#np.median(param_cv, axis=0)
+    loss, y, yp = loss_func(params_refit, return_y_yp=True)
     cm = confusion_matrix(y, yp)
-    f1 = f1_score(y,yp)
-    mcc = matthews_corrcoef(y,yp)
-    cohenkappa = cohen_kappa_score(y,yp)
-    print(opt_res.x)
+    f1 = f1_score(y, yp)
+    mcc = matthews_corrcoef(y, yp)
+    cohenkappa = cohen_kappa_score(y, yp)
+    print('refit')
+    print(params_refit)
     print(cm)
     print(f'f1  = {f1}')
     print(f'mcc = {mcc}')
     print(f'k   = {cohenkappa}')
+    """
+CV
+array([[ 0.74267049,  0.1040685 ,  0.        , -0.42622951],
+       [ 0.72839452,  0.06551942,  3.        , -0.73239437],
+       [ 0.74286243,  0.06083125,  0.        , -0.36      ],
+       [ 0.75142567,  0.06219886,  0.        , -0.46938776],
+       [ 0.74266268,  0.04159757,  0.52412241, -0.48275862]])
+array([[776, 112],
+       [160, 179]])
+f1  = 0.5682539682539683, 0.4941540500371201
+mcc = 0.42251019065585405, 0.35372920942100333
+k   = 0.4202934800733701, 0.3464660904957862
+
+refit
+array([0.74012847, 0.06618152, 0.99167768])
+[[738, 150]
+ [112, 227]]
+f1  = 0.6340782122905029
+mcc = 0.48529040418687525
+k   = 0.4839290702266401
+
+==> [0.74, 0.07, 1]
+[[737, 151]
+ [112, 227]]
+f1  = 0.6331938633193863
+mcc = 0.48384272880292256
+k   = 0.4824154938048839
+    """
     
-    df_res = pd.DataFrame(data=np.array(opt_res.x_iters), columns=['corr', 'rel_pow','rms'])
-    col = 'Performance_'+metric
-    df_res[col] = -opt_res.func_vals
-    df_res = df_res.sort_values(col, ignore_index=True, ascending=False)
-    print(df_res)
-    df_res.to_excel('params_performances_spindle2.xlsx', index=False)
+    #df_res = pd.DataFrame(data=np.array(opt_res.x_iters), columns=['corr', 'rel_pow','rms'])
+    #col = 'Performance_'+metric
+    #df_res[col] = -opt_res.func_vals
+    #df_res = df_res.sort_values(col, ignore_index=True, ascending=False)
+    #print(df_res)
+    #df_res.to_excel('params_performances_spindle.xlsx', index=False)
 
 
 
