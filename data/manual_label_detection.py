@@ -9,10 +9,9 @@ plt.rcParams.update({'font.size': 11})
 import seaborn as sns
 sns.set_style('ticks')
 import sys
-sys.path.insert(0, '/home/ubuntu/sleep_general')
-from mgh_sleeplab import load_mgh_signal, annotations_preprocess, vectorize_sleep_stages
 sys.path.insert(0, '..')
 from pattern_detection import get_spindle_peak_freq, my_spindle_detect, my_sw_detect, my_rem_detect
+from myfunctions import load_data, filter_signal
         
 
 class MyPlot:
@@ -49,7 +48,10 @@ class MyPlot:
         print(f'{self.rowi+1}/{len(self.df_detect)}')
         stage_num2txt = {5:'W', 4:'R', 3:'N1', 2:'N2', 1:'N3'}
         tt = np.arange(len(self.df_signals))/self.Fs
-        disp_time = 20  # [second]
+        if self.event_name=='rem':
+            disp_time = 100  # [second]
+        else:
+            disp_time = 20  # [second]
         spec_epoch_time = 4  # [s]
         NW = 3
         spec_epoch_size = int(round(spec_epoch_time*self.Fs))
@@ -167,26 +169,6 @@ class MyPlot:
             plt.show()
 
 
-def load_data(subject_folder, base_folder, ch_names, df_annot=None):
-    # load signal
-    signal_path = os.path.join(base_folder, subject_folder, 'Shifted_Signal_'+subject_folder+'.mat')
-    signals, params = load_mgh_signal(signal_path, channels=ch_names)
-    # load annotation
-    hashid, dov1, dov2 = subject_folder.split('_')
-    dov1 = datetime.datetime.strptime(dov1, '%Y%m%d')
-    annot = df_annot[(df_annot.HashID==hashid)&(df_annot.DOVshifted==dov1)].reset_index(drop=True)
-    annot = annotations_preprocess(annot, params['Fs'], verbose=False)
-    sleep_stages = vectorize_sleep_stages(annot, len(signals))
-    return signals, sleep_stages, params
-
-
-def filter_signal(signals, Fs, notch_freq, bandpass_freq):
-    signals = signals - signals.mean(axis=1, keepdims=True)
-    signals = mne.filter.notch_filter(signals, Fs, notch_freq, verbose=False)
-    signals = mne.filter.filter_data(signals, Fs, bandpass_freq[0], bandpass_freq[1], verbose=False)
-    return signals
-
-
 def main(pattern):
     import re
     
@@ -233,6 +215,7 @@ def main(pattern):
                 thresh={'corr':0.6, 'rel_pow':0.1, 'rms':1.5, 'amp':np.inf}, verbose=False)
             if len(res)==0:
                 continue
+            print(res)
             np.random.seed(random_seed+si*1000)
             Nrand = len(res)//50 if len(res)>=500 else min(20,len(res))
             res = res.iloc[np.sort(np.random.choice(len(res), Nrand, replace=False))]
@@ -243,14 +226,17 @@ def main(pattern):
                 verbose=False)
             if len(res)==0:
                 continue
+            print(res)
             np.random.seed(random_seed+si*1000)
             Nrand = len(res)//50 if len(res)>=500 else min(20,len(res))
             res = res.iloc[np.sort(np.random.choice(len(res), Nrand, replace=False))].reset_index(drop=True)
 
         elif pattern=='rem':
-            res = my_rem_detect(eog[0], eog[1], sleep_stages, Fs, eog_ch_names[0], include=[1,2,3,4], amplitude=[50,325], duration=[0.3,1.2], freq_rem=freq_rem, verbose=False)
+            res = my_rem_detect(eog[0], eog[1], sleep_stages, Fs, eog_ch_names[0], include=[4], amplitude=[50,325], duration=[0.3,1.2], freq_rem=freq_rem, verbose=False)
             if len(res)==0:
                 continue
+            print(res)
+            print(res.Stage.values)
             res['IdxChannel'] = res.IdxChannel+len(eeg)
             np.random.seed(random_seed+si*1000)
             Nrand = len(res)//50 if len(res)>=500 else min(20,len(res))

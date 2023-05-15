@@ -502,10 +502,11 @@ def my_sw_detect(eeg, sleep_stages, Fs, ch_names, include=None, freq_sw=[0.5, 2]
         return df_res
 
 
-def my_rem_detect(loc, roc, sleep_stages, Fs, ch_name, include=None, amplitude=[50,325], duration=[0.3,1.2], freq_rem=[0.5,5], verbose=False):
-    cols = ['Start', 'Peak', 'End', 'Duration', 'LOCAbsValPeak', 'ROCAbsValPeak',
-       'LOCAbsRiseSlope', 'ROCAbsRiseSlope', 'LOCAbsFallSlope',
-       'ROCAbsFallSlope', 'Stage', 'Channel', 'IdxChannel']
+def my_rem_detect(loc, roc, sleep_stages, Fs, ch_name, include=None, amplitude=[50,325], duration=[0.3,1.2], freq_rem=[0.5,5], var_thres=0.7, verbose=False):
+    cols = ['Start', 'Peak', 'End', 'Duration',
+        'LOCAbsValPeak', 'ROCAbsValPeak', 'LOCAbsRiseSlope', 'ROCAbsRiseSlope',
+        'LOCAbsFallSlope', 'ROCAbsFallSlope', 'LOCVarExplained', 'ROCVarExplained',
+        'Stage', 'Channel', 'IdxChannel']
     res = yasa.rem_detect(loc, roc, Fs,
             hypno=sleep_stages, include=include,
             amplitude=amplitude, duration=duration,
@@ -513,11 +514,26 @@ def my_rem_detect(loc, roc, sleep_stages, Fs, ch_name, include=None, amplitude=[
             verbose='INFO' if verbose else 'ERROR')
     if res is None:
         return pd.DataFrame(columns=cols)
-    else:
-        res = res.summary()
-        res['Channel'] = ch_name
-        res['IdxChannel'] = 0
-        res = res[cols]
-        res = res.sort_values('Start', ignore_index=True, ascending=True)
-        return res
+
+    res = res.summary()
+    res['Channel'] = ch_name
+    res['IdxChannel'] = 0
+
+    subepoch_size = int(round(2*Fs))+1
+    eog = np.array([loc,roc])
+    eog_f = mne.filter.filter_data(eog, Fs, freq_rem[0], freq_rem[1], verbose=False)
+    move_var   = pd.DataFrame(eog.T).rolling(subepoch_size, center=True, min_periods=1).var().values.T
+    move_var_f = pd.DataFrame(eog_f.T).rolling(subepoch_size, center=True, min_periods=1).var().values.T
+    move_var_explained = move_var_f/move_var
         
+    for i in range(len(res)):
+        start = int(round(res.Start.iloc[i]*Fs))
+        end   = int(round(res.End.iloc[i]*Fs))
+        res.loc[i, 'LOCVarExplained'] = move_var_explained[0][start:end].mean()
+        res.loc[i, 'ROCVarExplained'] = move_var_explained[1][start:end].mean()
+    res = res[(res.LOCVarExplained>=var_thres)&(res.ROCVarExplained>=var_thres)].reset_index(drop=True)
+
+    res = res[cols]
+    res = res.sort_values('Start', ignore_index=True, ascending=True)
+
+    return res
