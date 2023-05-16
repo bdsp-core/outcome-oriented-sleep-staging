@@ -405,7 +405,7 @@ def my_sw_detect(eeg, sleep_stages, Fs, ch_names, include=None, freq_sw=[0.5, 2]
     swa_thres = 0.8
 
     cols = ['Start', 'NegPeak', 'MidCrossing', 'PosPeak', 'End', 'Duration',
-        'ValNegPeak', 'ValPosPeak', 'PTP', 'SlopeNeg1', 'SlopePos', 'SlopeNeg2',
+        'ValNegPeak', 'ValPosPeak', 'PTP', 'SlopeNeg', 'SlopePos',
         'Frequency', 'Stage', 'Channel', 'IdxChannel']
     
     df_res = defaultdict(list)
@@ -418,9 +418,10 @@ def my_sw_detect(eeg, sleep_stages, Fs, ch_names, include=None, freq_sw=[0.5, 2]
             start = ids_zc[i]+1
             mid = ids_zc[i+1]+1
             end = ids_zc[i+2]+1
-            if not (start<mid<end):
-                continue
-            stage_ = mode(sleep_stages2[start:end]).mode[0]
+            #if not (start<mid<end):
+            #    continue
+            #stage_ = mode(sleep_stages2[start:end]).mode[0]
+            stage_ = sleep_stages2[mid]
             if include is not None and stage_ not in include:
                 continue
             ptp_ = np.ptp(eeg_f[chi,start:end])
@@ -507,15 +508,24 @@ def my_rem_detect(loc, roc, sleep_stages, Fs, ch_name, include=None, amplitude=[
         'LOCAbsValPeak', 'ROCAbsValPeak', 'LOCAbsRiseSlope', 'ROCAbsRiseSlope',
         'LOCAbsFallSlope', 'ROCAbsFallSlope', 'LOCVarExplained', 'ROCVarExplained',
         'Stage', 'Channel', 'IdxChannel']
+    verbose = 'INFO' if verbose else 'ERROR'
+    logger = logging.getLogger("yasa")
+    set_log_level(verbose)
+
+    if np.in1d(sleep_stages, include).sum()==0:
+        return pd.DataFrame(columns=cols)
     res = yasa.rem_detect(loc, roc, Fs,
             hypno=sleep_stages, include=include,
             amplitude=amplitude, duration=duration,
             freq_rem=freq_rem, remove_outliers=False,
-            verbose='INFO' if verbose else 'ERROR')
+            verbose=verbose)
     if res is None:
         return pd.DataFrame(columns=cols)
 
     res = res.summary()
+    if len(res)==0:
+        return pd.DataFrame(columns=cols)
+
     res['Channel'] = ch_name
     res['IdxChannel'] = 0
 

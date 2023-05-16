@@ -2,8 +2,8 @@ import datetime
 import os
 import mne
 import sys
-#sys.path.insert(0, '/home/ubuntu/sleep_general')
-sys.path.insert(0, r'D:\projects\sleep_general')
+sys.path.insert(0, '/home/ubuntu/sleep_general')
+#sys.path.insert(0, r'D:\projects\sleep_general')
 from mgh_sleeplab import load_mgh_signal, annotations_preprocess, vectorize_sleep_stages
 
 
