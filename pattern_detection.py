@@ -428,7 +428,7 @@ def my_sw_detect(eeg, sleep_stages, Fs, ch_names, include=None, freq_sw=[0.5, 2]
             if ptp_<amp_ptp[0] or ptp_>amp_ptp[1]:
                 continue
             ve = move_var_explained[chi, start:end].max()
-            if ve>1 or ve<swa_thres:
+            if np.isnan(ve) or ve>1 or ve<swa_thres:
                 continue
             
             mid_is_rising = ids_zc[i] in ids_zc_down
