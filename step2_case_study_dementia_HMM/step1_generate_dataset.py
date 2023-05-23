@@ -2,6 +2,7 @@ from itertools import groupby
 from collections import defaultdict
 import os
 import pickle
+from joblib import Parallel, delayed
 import numpy as np
 import pandas as pd
 from scipy.fftpack import next_fast_len
@@ -196,8 +197,8 @@ def get_features(signals, sleep_stages, Fs, epoch_times, n_jobs=1):
 if __name__=='__main__':
     outcome = 'Dementia'
     epoch_times = [30,15,10,5]
-    n_jobs = 14
     psg_base_folder = '/bdsp/opendata/PSG/data/S0001'
+    n_jobs = 1#6
 
     df = pd.read_csv(f'../data/mastersheet_matched_{outcome}.csv')
     df['DOVshifted'] = pd.to_datetime(df.DOVshifted)
@@ -210,16 +211,10 @@ if __name__=='__main__':
     emg_ch_names = ['EMG']
     ch_names = eeg_ch_names + eog_ch_names + emg_ch_names
     ch_names_re = ['F3-', 'F4-', 'C3-', 'C4-', 'O1-', 'O2-', 'E1-', 'E2-', 'chin']
-
-    save_paths = {et:f'features_epoch{et}s.csv.zip' for et in epoch_times}
     
     # get features
-    df_feat = {et:defaultdict(list) for et in epoch_times}
-    for i in tqdm(range(len(df))):
-        hashid = df.HashID.iloc[i]
-        dov = df.DOVshifted.iloc[i]
-
-        signals, sleep_stages, params = load_data(df.SignalPath.iloc[i].split('/')[-2], psg_base_folder, ch_names_re, df_annot=df_annot)
+    def _get_features(df_row):
+        signals, sleep_stages, params = load_data(df_row.SignalPath.split('/')[-2], psg_base_folder, ch_names_re, df_annot=df_annot)
         signals = signals.values.T
         signals, sleep_stages = remove_bad_start_end(signals, sleep_stages)
         Fs = params['Fs']
@@ -229,22 +224,27 @@ if __name__=='__main__':
             filter_signal(signals[8:], Fs, 60, [10, 100]),
         ], axis=0)
 
-        features, sleep_stages_epoch, epoch_start_ids = get_features(pd.DataFrame(data=signals.T, columns=ch_names), sleep_stages, Fs, epoch_times, n_jobs=n_jobs)
+        #features, sleep_stages_epoch, epoch_start_ids = 
+        return get_features(pd.DataFrame(data=signals.T, columns=ch_names), sleep_stages, Fs, epoch_times)
+
+    with Parallel(n_jobs=n_jobs, verbose=False) as pp:
+        result = pp(delayed(sqrt)(i ** 2) for i in tqdm(range(len(df))))
+
+    df_feat = {et:defaultdict(list) for et in epoch_times}
+    for i in range(len(df)):
+        hashid = df.HashID.iloc[i]
+        dov = df.DOVshifted.iloc[i]
+        features, sleep_stages_epoch, epoch_start_ids = result[i]
 
         for et in epoch_times:
             df_feat[et]['HashID'].extend([hashid]*len(features[et]))
             df_feat[et]['DOVshifted'].extend([dov]*len(features[et]))
-            df_feat[et]['EpochStartIdx'].extend(epoch_start_ids[et])
             df_feat[et]['SleepStage'].extend(sleep_stages_epoch[et])
+            df_feat[et]['EpochStartIdx'].extend(epoch_start_ids[et])
             for col in features[et].columns:
                 df_feat[et][col].extend(features[et][col])
-            if i%10==0:
-                pd.DataFrame(data=df_feat[et]).to_csv(save_paths[et].replace('.csv.zip','_tmp.csv.zip'), index=False, compression='zip')
 
-    #plt.close();fig=plt.figure(figsize=(4,4));ax=fig.add_subplot(111);ax.plot(fpr,tpr,c='k');ax.plot([0,1],[0,1],'r',ls='--');ax.set_xlim(-0.01,1.01);ax.set_ylim(-0.01,1.01);ax.text(0.99,0.01,f'AUC = {roc_auc_score(stages,swaperc):.2f}', ha='right', va='bottom');ax.scatter([fpr[idx]],[tpr[idx]],c='b',s=50);ax.text(fpr[idx]+0.03,tpr[idx],f'thres = {tt[idx]:.2f}',ha='left',va='top');ax.scatter([fpr[idx2]],[tpr[idx2]],c='b',s=50);ax.text(fpr[idx2]+0.03,tpr[idx2],f'thres = {tt[idx2]:.2f}',ha='left',va='top');ax.set_xlabel('FPR, 1-specificity');ax.set_ylabel('TPR, sensitivity');ax.grid(True);seaborn.despine();plt.tight_layout();plt.savefig('stage_n2n3_vs_swa_perc.png')
-    #th=0.8;ids1=df_feat[f'SWA_perc_{th}'][df_feat.SleepStage==1].dropna().values;ids0=df_feat[f'SWA_perc_{th}'][df_feat.SleepStage==2].dropna().values;fpr,tpr,tt=roc_curve(np.r_[np.zeros_like(ids0),np.ones_like(ids1)],np.r_[ids0,ids1]);tt[np.argmin(fpr**2+(1-tpr)**2)]
-    #plt.close();plt.plot(df_feat['SWA_amp_0.7'][df_feat.SleepStage==2].dropna());plt.ylim(0,200);plt.savefig('0.7_N2.png')
-
+    save_paths = {et:f'features_epoch{et}s.csv.zip' for et in epoch_times}
     for et in epoch_times:
         pd.DataFrame(data=df_feat[et]).to_csv(save_paths[et], index=False, compression='zip')
 
