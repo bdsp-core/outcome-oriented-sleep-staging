@@ -133,6 +133,7 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
         self.random_state = random_state
         self.verbose = verbose
         self.warm_start_model_folder = warm_start_model_folder
+        self.validation_step_outputs = []
         
         if verbose:
             logging.getLogger("lightning.pytorch.utilities.rank_zero").setLevel(logging.INFO)
@@ -272,7 +273,9 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
         self.log("val_loss", loss)
         self.log("val_loss_hmm", loss_hmm)
         self.log("val_loss_Y", loss_Y)
-        return {'H':H, 'zp':zp, 'Y':Y}
+        res = {'H':H, 'zp':zp, 'Y':Y}
+        self.validation_step_outputs.append(res)
+        return res
         
     def predict_step(self, batch, batch_idx):
         Xpr, Xpl, T = batch
@@ -292,9 +295,9 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
             },
         }
         
-    def validation_epoch_end(self, outputs):
-        H = np.concatenate([th2np(x['H']) for x in outputs]).astype(float)
-        Y = np.concatenate([th2np(x['Y']) for x in outputs]).astype(float)
+    def on_validation_epoch_end(self):
+        H = np.concatenate([th2np(x['H']) for x in self.validation_step_outputs]).astype(float)
+        Y = np.concatenate([th2np(x['Y']) for x in self.validation_step_outputs]).astype(float)
         self.val_output_yp = sigmoid(H)
         self.val_output_y = Y
     
@@ -475,7 +478,6 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
     
     #TODO
     def save(self, path, separate=False):
-        import pdb;pdb.set_trace()
         if separate:
             th.save(self.state_dict(), path)
         else:

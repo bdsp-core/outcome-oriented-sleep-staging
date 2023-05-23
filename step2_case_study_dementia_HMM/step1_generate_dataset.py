@@ -82,7 +82,7 @@ def get_features(signals, sleep_stages, Fs, epoch_times, n_jobs=1):
     emg = signals[emg_ch_names].values
     L = len(sleep_stages)
     nfast = next_fast_len(L)
-    env = np.abs(hilbert(emg, N=nfast)[:,:L])
+    env = np.abs(hilbert(emg, N=nfast)[:L])
     window = parzen(int(round(Fs*4)))
     env = np.convolve(env, window/np.sum(window)*2.5,mode='same')
     levels = np.percentile(env, np.arange(0,101,10))
@@ -122,7 +122,7 @@ def get_features(signals, sleep_stages, Fs, epoch_times, n_jobs=1):
                 spindle_peak_freq[:] = 13.5
             else:
                 spindle_peak_freq[np.isnan(spindle_peak_freq)] = np.nanmedian(spindle_peak_freq)
-            spindle_res = my_spindle_detect(
+            sp_res = my_spindle_detect(
                 eeg, sleep_stages, Fs, eeg_ch_names,
                 include=[2,1],
                 freq_sp=[[x-1,x+1] for x in spindle_peak_freq],
@@ -132,9 +132,9 @@ def get_features(signals, sleep_stages, Fs, epoch_times, n_jobs=1):
         has_spindle_F = np.zeros(len(tt))
         has_spindle_C = np.zeros(len(tt))
         has_spindle_O = np.zeros(len(tt))
-        for i in range(len(spindle_res)):
-            idx = np.searchsorted(tt, spindle_res.Peak.iloc[i])-1
-            chn = spindle_res.Channel.iloc[i]
+        for i in range(len(sp_res)):
+            idx = np.searchsorted(tt, sp_res.Peak.iloc[i])-1
+            chn = sp_res.Channel.iloc[i]
             if chn in eeg_ch_names_f:
                 has_spindle_F[idx] = 1
             elif chn in eeg_ch_names_c:
@@ -189,16 +189,16 @@ def get_features(signals, sleep_stages, Fs, epoch_times, n_jobs=1):
     
     if only_one_epoch_time:
         et = epoch_times[0]
-        return df_feats[et], sleep_stages_epochs[et], epoch_start_idss[et]
+        return df_feats[et], sleep_stages_epochs[et], epoch_start_idss[et], sp_res, sw_res, rem_res
     else:
-        return df_feats, sleep_stages_epochs, epoch_start_idss
+        return df_feats, sleep_stages_epochs, epoch_start_idss, sp_res, sw_res, rem_res
 
 
 if __name__=='__main__':
     outcome = 'Dementia'
     epoch_times = [30,15,10,5]
     psg_base_folder = '/bdsp/opendata/PSG/data/S0001'
-    n_jobs = 1#6
+    n_jobs = 16
 
     df = pd.read_csv(f'../data/mastersheet_matched_{outcome}.csv')
     df['DOVshifted'] = pd.to_datetime(df.DOVshifted)
@@ -221,20 +221,25 @@ if __name__=='__main__':
 
         signals = np.concatenate([
             filter_signal(signals[:8], Fs, 60, [0.3, 35]),
-            filter_signal(signals[8:], Fs, 60, [10, 100]),
+            filter_signal(signals[8:], Fs, 60, [10, 100 if Fs/2>100 else None]),
         ], axis=0)
 
         #features, sleep_stages_epoch, epoch_start_ids = 
         return get_features(pd.DataFrame(data=signals.T, columns=ch_names), sleep_stages, Fs, epoch_times)
 
     with Parallel(n_jobs=n_jobs, verbose=False) as pp:
-        result = pp(delayed(sqrt)(i ** 2) for i in tqdm(range(len(df))))
+        result = pp(delayed(_get_features)(df.iloc[i]) for i in tqdm(range(len(df))))
 
     df_feat = {et:defaultdict(list) for et in epoch_times}
+    sp_ress = []; sw_ress = []; rem_ress = []
     for i in range(len(df)):
         hashid = df.HashID.iloc[i]
         dov = df.DOVshifted.iloc[i]
-        features, sleep_stages_epoch, epoch_start_ids = result[i]
+        features, sleep_stages_epoch, epoch_start_ids, sp_res, sw_res, rem_res = result[i]
+
+        sp_res.insert(0, 'DOV', dov); sp_res.insert(0, 'HashID', hashid); sp_ress.append(sp_res)
+        sw_res.insert(0, 'DOV', dov); sw_res.insert(0, 'HashID', hashid); sw_ress.append(sw_res)
+        rem_res.insert(0, 'DOV', dov); rem_res.insert(0, 'HashID', hashid); rem_ress.append(rem_res)
 
         for et in epoch_times:
             df_feat[et]['HashID'].extend([hashid]*len(features[et]))
@@ -247,4 +252,7 @@ if __name__=='__main__':
     save_paths = {et:f'features_epoch{et}s.csv.zip' for et in epoch_times}
     for et in epoch_times:
         pd.DataFrame(data=df_feat[et]).to_csv(save_paths[et], index=False, compression='zip')
+    pd.concat(sp_ress, axis=0, ignore_index=True).to_csv('spindle_detection_result.csv', index=False)
+    pd.concat(sw_ress, axis=0, ignore_index=True).to_csv('slow_wave_detection_result.csv', index=False)
+    pd.concat(rem_ress, axis=0, ignore_index=True).to_csv('rem_detection_result.csv', index=False)
 
