@@ -54,7 +54,7 @@ def get_spindle_peak_freq(spec, freq, sleep_stages_epochs, freq_range=[11,15]):
     return np.array(peak_freqs)
 
 
-def my_spindle_detect(signals, sleep_stages, Fs, ch_names, include=None, freq_sp=[11,16], thresh={'corr':0.65, 'rel_pow':0.2, 'rms':1.5}, verbose=False, rel_pow_all=None, mcorr_all=None, mrms_all=None, return_precomputed=False, compute_sp_char=True):
+def my_spindle_detect(signals, sleep_stages, Fs, ch_names, thresh, include=None, freq_sp=[11,16], verbose=False, rel_pow_all=None, mcorr_all=None, mrms_all=None, return_precomputed=False, compute_sp_char=True, return_filtered_signal=False):
     #amp = thresh.pop('amp')
     
     #res = yasa.spindles_detect( signal, sf=Fs, ch_names=ch_names,
@@ -103,6 +103,7 @@ def my_spindle_detect(signals, sleep_stages, Fs, ch_names, include=None, freq_sp
         return None
         
     df = pd.DataFrame()
+    data_sigmas = []
     if rel_pow_all is None or mcorr_all is None or mrms_all is None:
         # Filtering
         nfast = next_fast_len(n_samples)
@@ -128,6 +129,7 @@ def my_spindle_detect(signals, sleep_stages, Fs, ch_names, include=None, freq_sp
                 l_trans_bandwidth=1.5, h_trans_bandwidth=1.5,
                 method="fir", verbose='ERROR'
             )
+            data_sigmas.append(data_sigma)
 
             # Hilbert power (to define the instantaneous frequency / power)
             analytic = signal.hilbert(data_sigma, N=nfast)[:n_samples]
@@ -384,13 +386,19 @@ def my_spindle_detect(signals, sleep_stages, Fs, ch_names, include=None, freq_sp
             res = res[res.Amplitude<150].reset_index(drop=True)
         res = res.sort_values('Start', ignore_index=True, ascending=True)
         
+    res = {'detection':res}
     if return_precomputed:
-        return res, rel_pow_all, mcorr_all, mrms_all
-    else:
-        return res
+        res['rel_pow_all'] = rel_pow_all
+        res['mcorr_all'] = mcorr_all
+        res['mrms_all'] = mrms_all
+    if return_filtered_signal:
+        res['filtered_signal'] = np.array(data_sigmas)
+    if len(res)==1:
+        res = res['detection']
+    return res
 
 
-def my_sw_detect(eeg, sleep_stages, Fs, ch_names, include=None, freq_sw=[0.5, 2], dur_neg=[0.3,1.5], dur_pos=[0.1,1], amp_neg=[40,200], amp_pos=[10,150], amp_ptp=[70, 350], verbose=False):
+def my_sw_detect(eeg, sleep_stages, Fs, ch_names, include=None, freq_sw=[0.3, 2], dur_neg=[0.3,1.5], dur_pos=[0.1,1], amp_neg=[40,200], amp_pos=[10,150], amp_ptp=[70, 350], swa_thres=0.85, verbose=False, return_filtered_signal=False):
     sleep_stages2 = np.array(sleep_stages)
     sleep_stages2[np.isnan(sleep_stages2)] = -1
     sleep_stages2 = sleep_stages2.astype(int)
@@ -402,11 +410,10 @@ def my_sw_detect(eeg, sleep_stages, Fs, ch_names, include=None, freq_sw=[0.5, 2]
     move_var   = pd.DataFrame(eeg.T).rolling(subepoch_size, center=True, min_periods=1).var().values.T
     move_var_f = pd.DataFrame(eeg_f.T).rolling(subepoch_size, center=True, min_periods=1).var().values.T
     move_var_explained = move_var_f/move_var
-    swa_thres = 0.8
 
     cols = ['Start', 'NegPeak', 'MidCrossing', 'PosPeak', 'End', 'Duration',
         'ValNegPeak', 'ValPosPeak', 'PTP', 'SlopeNeg', 'SlopePos',
-        'Frequency', 'Stage', 'Channel', 'IdxChannel']
+        'Frequency', 'VarExplained', 'Stage', 'Channel', 'IdxChannel']
     
     df_res = defaultdict(list)
     for chi in range(len(eeg_f)):
@@ -489,18 +496,24 @@ def my_sw_detect(eeg, sleep_stages, Fs, ch_names, include=None, freq_sw=[0.5, 2]
             df_res['ValPosPeak'].append(pos_peak_amp)
             df_res['PTP'].append(ptp_)
             df_res['Frequency'].append(1/df_res['Duration'][-1])
+            df_res['VarExplained'].append(ve)
             df_res['Stage'].append(stage_)
             df_res['Channel'].append(ch_names[chi])
             df_res['IdxChannel'].append(chi)
 
 
     if len(df_res)==0:
-        return pd.DataFrame(columns=cols)
+        df_res =  pd.DataFrame(columns=cols)
     else:
         df_res = pd.DataFrame(df_res)
         df_res = df_res[cols]
         df_res = df_res.sort_values('Start', ignore_index=True, ascending=True)
-        return df_res
+    res = {'detection':df_res}
+    if return_filtered_signal:
+        res['filtered_signal'] = eeg_f
+    if len(res)==1:
+        res = res['detection']
+    return res
 
 
 def my_rem_detect(loc, roc, sleep_stages, Fs, ch_name, include=None, amplitude=[50,325], duration=[0.3,1.2], freq_rem=[0.5,5], var_thres=0.7, verbose=False):
