@@ -1,5 +1,6 @@
 import logging
 import os
+import shutil
 import numpy as np
 from tqdm import tqdm
 from sklearn.base import BaseEstimator, ClassifierMixin
@@ -12,6 +13,7 @@ from torch.utils.data import Dataset, DataLoader, Subset
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from lightning.pytorch import LightningModule, Trainer
+from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
 import lightning
 lightning.fabric.utilities.seed.seed_everything(2023)
@@ -115,7 +117,7 @@ def maxmul(log_A, log_B):
 
 #TODO make it generalizable, OOSSClassifier --> HMMOOSSClassifier, TransformerOOSClassifier
 class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
-    def __init__(self, thres_bounds=None, n_features=None, Xnames=None, n_components=3, C_l1=0.01, C_Y=1, C_emission=0.01, lr=0.001, max_iter=100, batch_size=8, lr_reduce_patience=3, early_stop_patience=10, random_state=None, verbose=True, warm_start_model_folder=''):
+    def __init__(self, thres_bounds=None, n_features=None, Xnames=None, n_components=3, C_l1=0.01, C_Y=1, C_emission=0.01, lr=0.001, max_iter=100, batch_size=8, lr_reduce_patience=3, early_stop_patience=10, log_dir=None, random_state=None, verbose=True, warm_start_model_folder=''):
         super().__init__()
         self.save_hyperparameters()
         self.thres_bounds = thres_bounds
@@ -131,9 +133,10 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
         self.lr_reduce_patience = lr_reduce_patience
         self.early_stop_patience = early_stop_patience
         self.random_state = random_state
+        self.log_dir = log_dir
         self.verbose = verbose
         self.warm_start_model_folder = warm_start_model_folder
-        self.validation_step_outputs = []
+        self.validation_outputs = []
         
         if verbose:
             logging.getLogger("lightning.pytorch.utilities.rank_zero").setLevel(logging.INFO)
@@ -259,22 +262,22 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
         Xpr, Xpl, T, Y = batch
         log_p_X_hmm, H, zp = self(Xpr, Xpl, T)
         loss, loss_hmm, loss_Y, reg_l1, reg_emission = self._loss(H, Y, log_p_X_hmm)
-        self.log("train_loss", loss)
-        self.log("train_loss_hmm", loss_hmm)
-        self.log("train_loss_Y", loss_Y)
-        self.log("train_reg_l1", reg_l1)
-        self.log("train_reg_emission", reg_emission)
+        self.log("tr_loss", loss)#, prog_bar=True)
+        self.log("tr_loss_hmm", loss_hmm)#, prog_bar=True)
+        self.log("tr_loss_Y", loss_Y)#, prog_bar=True)
+        self.log("tr_reg_l1", reg_l1)
+        self.log("tr_reg_emission", reg_emission)
         return loss
         
     def validation_step(self, batch, batch_idx):
         Xpr, Xpl, T, Y = batch
         log_p_X_hmm, H, zp = self(Xpr, Xpl, T)
         loss, loss_hmm, loss_Y, reg_l1, reg_emission = self._loss(H, Y, log_p_X_hmm)
-        self.log("val_loss", loss)
-        self.log("val_loss_hmm", loss_hmm)
-        self.log("val_loss_Y", loss_Y)
+        self.log("val_loss", loss)#, prog_bar=True)
+        self.log("val_loss_hmm", loss_hmm)#, prog_bar=True)
+        self.log("val_loss_Y", loss_Y)#, prog_bar=True)
         res = {'H':H, 'zp':zp, 'Y':Y}
-        self.validation_step_outputs.append(res)
+        self.validation_outputs.append(res)
         return res
         
     def predict_step(self, batch, batch_idx):
@@ -296,13 +299,16 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
         }
         
     def on_validation_epoch_end(self):
-        H = np.concatenate([th2np(x['H']) for x in self.validation_step_outputs]).astype(float)
-        Y = np.concatenate([th2np(x['Y']) for x in self.validation_step_outputs]).astype(float)
+        #if len(self.validation_outputs)==0:
+        H = np.concatenate([th2np(x['H']) for x in self.validation_outputs]).astype(float)
+        Y = np.concatenate([th2np(x['Y']) for x in self.validation_outputs]).astype(float)
         self.val_output_yp = sigmoid(H)
         self.val_output_y = Y
+        self.validation_outputs.clear()
     
     def _get_trainer(self):
         return Trainer(
+                logger = TensorBoardLogger(save_dir=self.log_dir),
                 accelerator='auto', max_epochs=self.max_iter,
                 #deterministic=True,
                 check_val_every_n_epoch=1, log_every_n_steps=3,
@@ -323,8 +329,8 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
             self.unnormalized_transition_matrix = nn.Parameter(weights['unnormalized_transition_matrix'])
             self.unnormalized_emission_matrix = nn.Parameter(weights['unnormalized_emission_matrix'])
             self.unnormalized_state_priors = nn.Parameter(weights['unnormalized_state_priors'])
-            self.coef_th_ = nn.Parameter(weights['coef_'])
-            self.intercept_th_ = nn.Parameter(weights['intercept_'])
+            self.coef_th_ = nn.Parameter(weights['coef_th_'])
+            self.intercept_th_ = nn.Parameter(weights['intercept_th_'])
             print(f'warm start weights loaded from {path}!')
         else:
             NC = self.n_components
@@ -361,6 +367,7 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
         if separate:
             old_training_step = self.training_step
             old_validation_step = self.validation_step
+            old_on_validation_epoch_end = self.on_validation_epoch_end
             
             #collate_fn2 = lambda batch: MyDataset.collate(batch, split_to_shorter=True)
             #loader_tr.collate_fn = collate_fn2
@@ -372,15 +379,18 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
                 Xpr, Xpl, T, Y = batch
                 log_p_X_hmm = self(Xpr, Xpl, T, do_backward=False)
                 loss = self._loss_hmm(log_p_X_hmm)
-                self.log("train_loss", loss)
+                self.log("tr_loss", loss)#, prog_bar=True)
                 return loss
             def validation_step(batch, batch_idx):
                 Xpr, Xpl, T, Y = batch
                 log_p_X_hmm = self(Xpr, Xpl, T, do_backward=False)
                 loss = self._loss_hmm(log_p_X_hmm)
-                self.log("val_loss", loss)
+                self.log("val_loss", loss)#, prog_bar=True)
+            def on_validation_epoch_end():
+                pass
             self.training_step = training_step
             self.validation_step = validation_step
+            self.on_validation_epoch_end = on_validation_epoch_end
             mytrainer1 = self._get_trainer()
             mytrainer1.fit(model=self, train_dataloaders=loader_tr, val_dataloaders=loader_va)
             
@@ -395,16 +405,16 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
                 Xpr, Xpl, T, Y = batch
                 _, H, zp = self(Xpr, Xpl, T)
                 loss, loss_Y, reg_l1 = self._loss_Y(H,Y)
-                self.log("train_loss", loss)
-                self.log("train_loss_Y", loss_Y)
-                self.log("train_reg_l1", reg_l1)
+                self.log("tr_loss", loss)#, prog_bar=True)
+                self.log("tr_loss_Y", loss_Y)#, prog_bar=True)
+                self.log("tr_reg_l1", reg_l1)
                 return loss
             def validation_step(batch, batch_idx):
                 Xpr, Xpl, T, Y = batch
                 _, H, zp = self(Xpr, Xpl, T)
                 loss, loss_Y, reg_l1 = self._loss_Y(H,Y)
-                self.log("val_loss", loss)
-                self.log("val_loss_Y", loss_Y)
+                self.log("val_loss", loss)#, prog_bar=True)
+                self.log("val_loss_Y", loss_Y)#, prog_bar=True)
                 self.log("val_reg_l1", reg_l1)
             self.training_step = training_step
             self.validation_step = validation_step
@@ -413,6 +423,7 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
             
             self.training_step = old_training_step
             self.validation_step = old_validation_step
+            self.on_validation_epoch_end = old_on_validation_epoch_end
             
         else:
             self.mytrainer = self._get_trainer()

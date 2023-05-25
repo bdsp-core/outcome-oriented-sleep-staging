@@ -1,3 +1,4 @@
+import sys
 import datetime
 import os
 import pickle
@@ -17,20 +18,22 @@ def cv_1fold_iter(X):
  
 
 def main():
-    outcome = 'Dementia'
-    epoch_time = 30
+    outcome = sys.argv[1]#'Dementia'
+    epoch_time = int(sys.argv[2])#30
     max_iter1 = 10
-    max_iter2 = 100###
-    n_state_range = [3,15]###
+    max_iter2 = 100
+    n_state_range = [5,15]
     batch_size = 8
     lr_reduce_patience = 3
     early_stop_patience = 10
-    Ncv = 10###
+    Ncv = 10
     class_weight = None # since using matched dataset
     random_state = 2023
-    train_warm_start = False
-    result_folder = f'results_new_{outcome}_epoch{epoch_time}s'
     verbose = True###
+    warmstart_log_folder = f'lightning_logs_warmstart_model_epochtime{epoch_time}s'
+    log_folder = f'lightning_logs_epochtime{epoch_time}s'
+    result_folder = f'results_new_{outcome}_epoch{epoch_time}s'
+    os.makedirs(result_folder, exist_ok=True)
     
     df_feat = pd.read_csv(f'features_epoch{epoch_time}s.csv.zip')
     unique_sids = df_feat.HashID.unique()
@@ -40,9 +43,6 @@ def main():
     Xnames.remove('DOVshifted')
     Xnames.remove('SleepStage')
     Xnames.remove('EpochStartIdx')
-    Xnames.remove('sw_perc_F')
-    Xnames.remove('sw_perc_C')
-    Xnames.remove('sw_perc_O')
     X = df_feat[Xnames].values
     df_y = pd.read_csv(f'../data/mastersheet_matched_{outcome}.csv')
     Y = df_y[f'Y_{outcome}'].values.astype(int)
@@ -52,7 +52,7 @@ def main():
     
     ## get CV split
     
-    cv_path = f'cv_split_{outcome}_N={N}_seed{random_state}.csv'
+    cv_path = f'cv_split_{outcome}_N={N}_epochtime{epoch_time}s_seed{random_state}.csv'
     if os.path.exists(cv_path):
         df_cv = pd.read_csv(cv_path)
         print(f'CV assignment is read from {cv_path}')
@@ -65,8 +65,6 @@ def main():
         print(df_cv)
         df_cv.to_csv(cv_path, index=False)
        
-    ## train new model
-    
     D = X.shape[1]
     binary_col_mask = np.array([set(X[:,i])==set([0,1]) for i in range(D)])
     X2 = X[:,~binary_col_mask]
@@ -76,14 +74,23 @@ def main():
     thres_bounds[0,binary_col_mask] = 0.49
     thres_bounds[1,binary_col_mask] = 0.51
     
-    warm_start_model_folder = 'warm_start_models_ok'
-    if train_warm_start:
+    warm_start_model_folder = f'warm_start_models_ok_epochtime{epoch_time}s'
+    for ns in range(n_state_range[0], n_state_range[1]+1):
+        save_path = os.path.join(warm_start_model_folder, f'n_state={ns}.pth')
+        if os.path.exists(save_path):
+            continue
         os.makedirs(warm_start_model_folder, exist_ok=True)
-        for ns in range(n_state_range[0], n_state_range[1]+1):
-            print(f'warm starting n_state={ns}')
-            model = HMMOOSSClassifier(thres_bounds, D, Xnames=Xnames, n_components=ns, random_state=random_state+ns, lr=0.01, max_iter=max_iter1, batch_size=batch_size, lr_reduce_patience=lr_reduce_patience, early_stop_patience=early_stop_patience, verbose=True)
-            model.fit(X, Y, separate=True)
-            model.save(os.path.join(warm_start_model_folder, f'n_state={ns}.pth'), separate=True)
+        print(f'warm starting n_state={ns}')
+        model = HMMOOSSClassifier(
+                    thres_bounds, D, Xnames=Xnames, n_components=ns,
+                    lr=0.01, max_iter=max_iter1,
+                    batch_size=batch_size, lr_reduce_patience=lr_reduce_patience,
+                    early_stop_patience=early_stop_patience,
+                    verbose=True, random_state=random_state+ns,
+                    log_dir=warmstart_log_folder)
+        X2 = [X[sids==sid] for sid in unique_sids]
+        model.fit(X2, Y, separate=True)
+        model.save(save_path, separate=True)
     
     yptes = np.zeros(N)
     models_cv = []
@@ -95,7 +102,13 @@ def main():
         ytr = Y[trids]
         
         """
-        model = HMMOOSSClassifier(thres_bounds, D, Xnames=Xnames, random_state=random_state, lr=0.01, max_iter=max_iter2, batch_size=batch_size, lr_reduce_patience=lr_reduce_patience, early_stop_patience=early_stop_patience, verbose=verbose, warm_start_model_folder=warm_start_model_folder)
+        model = HMMOOSSClassifier(
+                thres_bounds, D, Xnames=Xnames,
+                lr=0.01, max_iter=max_iter2, batch_size=batch_size,
+                lr_reduce_patience=lr_reduce_patience, early_stop_patience=early_stop_patience,
+                warm_start_model_folder=warm_start_model_folder,
+                verbose=verbose, random_state=random_state,
+                log_dir=log_folder)
         model = BayesSearchCV(model,
                {'n_components':Integer(n_state_range[0], n_state_range[1]),
                 'C_l1': Real(1e-2, 1e0, 'log-uniform'),
@@ -114,22 +127,28 @@ def main():
             print(f"current best params: {best_params}")
         model.fit(Xtr, ytr, callback=on_step)
         best_score = model.best_score_
-        best_param = model.best_params_
+        best_params = model.best_params_
         model = model.best_estimator_
         """
         models_ = []
         scores_ = []
         n_components = np.arange(n_state_range[0], n_state_range[1]+1)
-        for nc in n_components:
-            model_ = HMMOOSSClassifier(thres_bounds, D, Xnames=Xnames, random_state=random_state, lr=0.01, max_iter=max_iter2, batch_size=batch_size, lr_reduce_patience=lr_reduce_patience, early_stop_patience=early_stop_patience, verbose=verbose, warm_start_model_folder=warm_start_model_folder, n_components=nc, C_l1=0.1, C_Y=50, C_emission=0.1)
+        for ns in n_components:
+            model_ = HMMOOSSClassifier(
+                    thres_bounds, D, Xnames=Xnames,
+                    lr=0.01, max_iter=max_iter2, batch_size=batch_size,
+                    lr_reduce_patience=lr_reduce_patience, early_stop_patience=early_stop_patience,
+                    random_state=random_state, verbose=verbose,
+                    warm_start_model_folder=warm_start_model_folder,
+                    n_components=ns, C_l1=0.1, C_Y=50, C_emission=0.1,
+                    log_dir=log_folder)
             model_.fit(Xtr, ytr)
-            import pdb;pdb.set_trace()
             models_.append(model_)
             scores_.append(model_.score(None,None))
             print(scores_)
         best_id = np.argmax(scores_)
         best_score = scores_[best_id]
-        best_param = {'n_components':n_components[best_id]}
+        best_params = {'n_components':n_components[best_id]}
         model = models_[best_id]
             
         dt = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -146,8 +165,7 @@ def main():
         
         Xte = [X[sids==sid] for sid in unique_sids[teids]]
         yptes[teids] = model.predict_proba(Xte)[:,1]
-        import pdb;pdb.set_trace()
-        model.save(os.path.join(result_folder, f'model_cv{cvi}'))
+        model.save(os.path.join(result_folder, f'model_cv{cvi}.ckpt'))
         
     auc = roc_auc_score(Y, yptes)
     print(f'OVERALL CV AUC new = {auc}')
@@ -157,10 +175,18 @@ def main():
     C_l1 = np.median([m.C_l1 for m in models_cv])
     C_Y = np.median([m.C_Y for m in models_cv])
     C_emission = np.median([m.C_emission for m in models_cv])
-    model_final = HMMOOSSClassifier(thres_bounds, D, Xnames=Xnames, n_components=nc, C_l1=C_l1, C_Y=C_Y, C_emission=C_emission, random_state=random_state, lr=0.01, max_iter=max_iter2, batch_size=batch_size, lr_reduce_patience=lr_reduce_patience, early_stop_patience=early_stop_patience, verbose=True, warm_start_model_folder=warm_start_model_folder)
-    model_final.fit(X,Y)
-    Zp = model_final.predict_proba_Z(X)
-    yp_final_train = model_final.predict_proba(X)[:,1]
+    model_final = HMMOOSSClassifier(
+            thres_bounds, D, Xnames=Xnames,
+            n_components=nc, C_l1=C_l1, C_Y=C_Y, C_emission=C_emission,
+            lr=0.01, max_iter=max_iter2, batch_size=batch_size,
+            lr_reduce_patience=lr_reduce_patience, early_stop_patience=early_stop_patience,
+            verbose=True, random_state=random_state,
+            warm_start_model_folder=warm_start_model_folder,
+            log_dir=log_folder)
+    X2 = [X[sids==sid] for sid in unique_sids]
+    model_final.fit(X2, Y)
+    Zp = model_final.predict_proba_Z(X2)
+    yp_final_train = model_final.predict_proba(X2)[:,1]
     
     os.makedirs(result_folder, exist_ok=True)
     with open(os.path.join(result_folder, f'results.pickle'), 'wb') as ff:
@@ -168,7 +194,7 @@ def main():
         'sids_te':sids, 'yte':Y, 'ypte':yptes, 'yp_final_train':yp_final_train,
         'Zp':Zp,
         }, ff)
-    model_final.save(os.path.join(result_folder, 'model_final'))
+    model_final.save(os.path.join(result_folder, 'model_final.ckpt'))
     
         
 if __name__=='__main__':
