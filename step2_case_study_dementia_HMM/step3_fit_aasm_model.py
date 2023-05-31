@@ -6,6 +6,47 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from skopt import BayesSearchCV
+
+
+def get_features(S):
+    stages = [1,2,3,4,5]
+    tst = np.sum(np.in1d(S, stages))*30/3600
+
+    stage_times_hour = []
+    stage_perc = []
+    for s in stages:
+        ids = S==s
+        stage_times_hour.append(np.sum(ids)*30/3600)
+        stage_perc.append(np.mean(ids))
+
+    cm = np.zeros((len(stages), len(stages)))+1
+    for s1, s2 in zip(S[:-1], S[1:]):
+        if s1 in stages and s2 in stages:
+            s1_ = int(s1-1)
+            s2_ = int(s2-1)
+            cm[s1_,s2_] += 1
+    cm = cm/cm.sum(axis=1, keepdims=True)
+    cm = cm.flatten()
+
+    sleep_ids = np.where(np.in1d(S, [1,2,3,4]))[0]
+    if len(sleep_ids)>0:
+        sl = sleep_ids[0]*30/60
+    else:
+        sl = len(S)*30/60
+
+    rem_ids = np.where(np.in1d(S, [4]))[0]
+    if len(rem_ids)>0:
+        rl = rem_ids[0]*30/60
+    else:
+        rl = len(S)*30/60
+
+    if len(sleep_ids)>0:
+        waso = (S[sleep_ids[0]:sleep_ids[-1]+1]==5).sum()*30/60
+    else:
+        waso = len(S)*30/60
+
+    #return np.r_[tst, stage_times_hour, stage_perc, cm, sl, rl, waso]
+    return stage_perc
             
 
 def main():
@@ -14,20 +55,21 @@ def main():
     Ncv = 10
     class_weight = None # since using matched dataset
     random_state = 2023
+    result_folder = f'results_aasm_{outcome}_epoch{epoch_time}s'
     
-    with open(f'dataset_{outcome}_epoch{epoch_time}s.pickle', 'rb') as ff:
-        res = pickle.load(ff)
-    sids = res['sids']
-    X = res['X']
-    S = res['S']
-    Y = res['Y']
-    Xnames = res['Xnames']
+    df_feat = pd.read_csv(f'features_epoch{epoch_time}s.csv.zip')
+    sids = df_feat.HashID.values
+    unique_sids = pd.unique(sids)
+    S = df_feat.SleepStage.values
+    S = [S[sids==x] for x in unique_sids]
+    df_y = pd.read_csv(f'../data/mastersheet_matched_{outcome}.csv')
+    Y = df_y[f'Y_{outcome}'].values.astype(int)
     N = len(Y)
     print(f'N = {N}')
     
     ## get CV split
     
-    cv_path = f'cv_split_{outcome}_N={N}_seed{random_state}.csv'
+    cv_path = f'cv_split_{outcome}_N={N}_epochtime{epoch_time}s_seed{random_state}.csv'
     df_cv = pd.read_csv(cv_path)
         
     ## train AASM model
@@ -47,10 +89,11 @@ def main():
                 #'l1_ratio': (0.01, 0.99, 'uniform'),
                 },
             scoring='roc_auc', cv=Ncv, n_points=10, n_iter=50,###
-            n_jobs=14, verbose=False, random_state=random_state,
+            n_jobs=8, verbose=False, random_state=random_state,
             )
-        Zhist = np.array([[np.mean(z==zz) for zz in range(1,5-1+1)] for z in Str])
-        model_aasm.fit(Zhist, ytr)
+
+        Xtr = np.array([get_features(s) for s in Str])
+        model_aasm.fit(Xtr, ytr)
         
         dt = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         print(f'[{dt}] CV = {cvi}: AASM best score = {model_aasm.best_score_}')
@@ -59,20 +102,20 @@ def main():
         models_aasm_cv.append(model_aasm.best_estimator_)
         
         Ste = [S[i] for i in teids]
-        Zhist = np.array([[np.mean(z==zz) for zz in range(1,5-1+1)] for z in Ste])
-        yptes_aasm[teids] = model_aasm.predict_proba(Zhist)[:,1]
+        Xte = np.array([get_features(s) for s in Ste])
+        yptes_aasm[teids] = model_aasm.predict_proba(Xte)[:,1]
 
+    import pdb;pdb.set_trace()
     auc = roc_auc_score(Y, yptes_aasm)
     print(f'OVERALL CV AUC AASM = {auc}')
     
     # fit final model
     best_C = np.median([m.C for m in models_aasm_cv])
     model_aasm_final = LogisticRegression(penalty='l1', C=best_C, tol=0.001, class_weight=class_weight, random_state=random_state, solver='liblinear', max_iter=10000)
-    Zhist = np.array([[np.mean(z==zz) for zz in range(1,5-1+1)] for z in S])
-    model_aasm_final.fit(Zhist, Y)
+    X = np.array([get_features(s) for s in S])
+    model_aasm_final.fit(X, Y)
     print(f'Final AASM coef = {model_aasm_final.coef_}')
     
-    result_folder = f'results_{outcome}_epoch{epoch_time}s'
     os.makedirs(result_folder, exist_ok=True)
     with open(os.path.join(result_folder, f'results_aasm.pickle'), 'wb') as ff:
         pickle.dump({
