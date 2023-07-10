@@ -28,9 +28,8 @@ df = df.iloc[good_ids].reset_index(drop=True)
 ids1 = np.where(pd.isna(df[cens_col])|((df[time_col]>0)&(df[time_col]<=1)&(df[cens_col]==0)))[0]
 ids0 = np.where(df[cens_col]==1)[0]
 np.random.seed(24)
-"""
-ids0 = np.random.choice(ids0, len(ids1)*2)
-"""
+#ids0 = np.random.choice(ids0, len(ids1)*2)
+
 available = np.zeros(len(df), dtype=bool)
 available[ids0] = True
 matched_ids0 = []
@@ -69,6 +68,51 @@ df_annot=pd.concat(df_annots,axis=0,ignore_index=True)
 df_annot.to_csv('annotations_sleep_stages.zip',index=False,compression='zip')
 """
 
+"""
+df1 = pd.read_excel('mastersheet_outcome_deid.xlsx')
+df2 = pd.read_csv(f'mastersheet_matched_Dementia.csv')
+df2['DOVshifted'] = pd.to_datetime(df2.DOVshifted)
+
+keys = ['HashID', 'BDSPPatientID','DOVshifted']
+cols = [x for x in df1.columns if x in keys or x not in df2.columns]
+df = df2.merge(df1[cols], on=keys, how='left', validate='1:1')
+
+outcomes = [
+    'IntracranialHemorrhage',
+    'IschemicStroke',
+    'Atrial_Fibrillation',
+    'Myocardial_Infarction',
+    'DiabetesII',
+    'Hypertension',
+    'Bipolar_Disorder',
+    'Depression']
+
+for outcome in outcomes:
+    cens_col = f'cens_{outcome}'
+    time_col = f'time_{outcome}'
+    ids1 = np.where(pd.isna(df[cens_col])|((df[time_col]>0)&(df[time_col]<=1)&(df[cens_col]==0)))[0]
+    ids0 = np.where(df[cens_col]==1)[0]
+    df.loc[ids0, f'Y_{outcome}'] = 0
+    df.loc[ids1, f'Y_{outcome}'] = 1
+
+cols = ['HashID', 'BDSPPatientID', 'DOVshifted', 'Age', 'Sex', 'ESS', 'BMI',
+       'Race', 'Ethnicity', 'AHI', 'TypeOfTest', 'MedBenzo', 'MedAntiDep_SSRI',
+       'MedAntiDep_SNRI', 'MedAntiDep_TCA', 'MedAntiDep', 'MedSedative',
+       'MedAntiEplipetic', 'MedStimulant', 'Y_Dementia'] + [f'Y_{x}' for x in outcomes] +['SignalPath', 'AnnotPath']
+df = df[cols]
+df.to_csv(f'mastersheet_matched_Dementia_alloutcomes.csv', index=False)
+
+
+Y_Hypertension              188
+Y_Dementia                  159
+Y_Depression                 74
+Y_Atrial_Fibrillation        62
+Y_Myocardial_Infarction      43
+#Y_IschemicStroke             39
+#Y_DiabetesII                 30
+#Y_Bipolar_Disorder           12
+#Y_IntracranialHemorrhage      9
+"""
 df = df[[
     'HashID', 'BDSPPatientID', 'DOVshifted', 'Age', 'Sex', 'ESS', 'BMI',
     'Race', 'Ethnicity', 'AHI', 'TypeOfTest', 'MedBenzo', 'MedAntiDep_SSRI',
