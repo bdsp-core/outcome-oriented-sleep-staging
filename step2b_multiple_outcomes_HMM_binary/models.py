@@ -326,6 +326,7 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
                 
     def fit(self, X, Y, separate=False):
         path = os.path.join(self.warm_start_model_folder, f'n_state={self.n_components}.pth')
+        self.Dy = Y.shape[1]
         if os.path.exists(path):
             weights = th.load(path)
             self.unnormalized_thres = nn.Parameter(weights['unnormalized_thres'])
@@ -336,7 +337,6 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
             self.intercept_th_ = nn.Parameter(weights['intercept_th_'])
             print(f'warm start weights loaded from {path}!')
         else:
-            self.Dy = Y.shape[1]
             NC = self.n_components
             D = self.n_features
             scale = 1/np.sqrt(D)

@@ -156,6 +156,7 @@ def main():
             scores_.append(a)
             scores_each_outcome_.append(b)
             print(scores_)
+            print(scores_each_outcome_)
         best_id = np.argmax(scores_)
         best_score = scores_[best_id]
         best_params = {'n_components':n_components[best_id]}

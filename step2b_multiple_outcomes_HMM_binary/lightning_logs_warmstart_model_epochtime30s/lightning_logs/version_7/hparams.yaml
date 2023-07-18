@@ -1,0 +1,65 @@
+C_Y: 1
+C_emission: 0.01
+C_l1: 0.01
+Xnames:
+- alpha_rel_bp_F
+- alpha_rel_bp_C
+- alpha_rel_bp_O
+- theta_rel_bp_F
+- theta_rel_bp_C
+- theta_rel_bp_O
+- has_spindle_F
+- has_spindle_C
+- has_spindle_O
+- sw_amp_ptp_F
+- sw_amp_ptp_C
+- sw_amp_ptp_O
+- sw_perc_F
+- sw_perc_C
+- sw_perc_O
+- has_rem
+- emg_env_rank_mean
+batch_size: 8
+early_stop_patience: 10
+log_dir: lightning_logs_warmstart_model_epochtime30s
+lr: 0.01
+lr_reduce_patience: 3
+max_iter: 10
+n_components: 8
+n_features: 17
+random_state: 2031
+thres_bounds: !!python/object/apply:numpy.core.multiarray._reconstruct
+  args:
+  - !!python/name:numpy.ndarray ''
+  - !!python/tuple
+    - 0
+  - !!binary |
+    Yg==
+  state: !!python/tuple
+  - 1
+  - !!python/tuple
+    - 2
+    - 17
+  - !!python/object/apply:numpy.dtype
+    args:
+    - f8
+    - false
+    - true
+    state: !!python/tuple
+    - 3
+    - <
+    - null
+    - null
+    - null
+    - -1
+    - -1
+    - 0
+  - false
+  - !!binary |
+    EHeAcyakoD9Lsl4bR3ujP4J9jqUV16I/6HGHoUZvtT9w6mRnkRC5P08WXDlVnLo/XI/C9Shc3z9c
+    j8L1KFzfP1yPwvUoXN8/1Ep1Su78UkDqVxPHnKFSQM7N/wtWZ1JArr8RyuhtiT+sWPKLJb+IP+uN
+    UEZvy4o/XI/C9Shc3z9qvHSTGATgPxp/9INKltU//BSGO7uV2D+VFlrg9w7dP9bTYCRNDto/cTAJ
+    Se5l2z8hMKR3FrPcP1K4HoXrUeA/UrgehetR4D9SuB6F61HgPwajehKGrmpAt8B6qE8fZ0CBwNAz
+    t8RlQNv5fmq8dMc/Zh8+w64AwT+bffgMuwLAP1K4HoXrUeA/zczMzMxMIUA=
+verbose: true
+warm_start_model_folder: ''
