@@ -46,7 +46,6 @@ def main():
     df_y = pd.read_csv(f'../data/mastersheet_matched_Dementia_alloutcomes.csv')
     ycols = ['Y_Dementia',
         'Y_Hypertension',
-        'Y_Dementia',
         'Y_Depression',
         'Y_Atrial_Fibrillation',
         'Y_Myocardial_Infarction',]
@@ -99,7 +98,7 @@ def main():
         model.fit(X2, Y, separate=True)
         model.save(save_path, separate=True)
     
-    yptes = np.zeros(N)
+    yptes = np.zeros((N, len(ycols)))
     models_cv = []
     for cvi in range(1,Ncv+1):
         print(f'\n\nnew model CV = {cvi}')
@@ -176,12 +175,12 @@ def main():
         models_cv.append(model)
         
         Xte = [X[sids==sid] for sid in unique_sids[teids]]
-        yptes[teids] = model.predict_proba(Xte)[:,1]
+        yptes[teids] = model.predict_proba(Xte)#[:,1]
         model.save(os.path.join(result_folder, f'model_cv{cvi}.ckpt'))
         
     for yi, ycol in enumerate(ycols):
         ids = ~np.isnan(Y[:,yi])
-        auc = roc_auc_score(Y[ids][:,yi], yptes[ids])
+        auc = roc_auc_score(Y[ids][:,yi], yptes[ids][:,yi])
         print(f'{ycol}: OVERALL CV AUC new = {auc}')
     
     # fit final model
