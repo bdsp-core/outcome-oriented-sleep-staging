@@ -45,8 +45,8 @@ def get_features(S):
     else:
         waso = len(S)*30/60
 
-    return np.r_[tst, stage_times_hour, stage_perc, cm, sl, rl, waso]
-    #return stage_perc
+    #return np.r_[tst, stage_times_hour, stage_perc, cm, sl, rl, waso]
+    return stage_perc
             
 
 def main():
