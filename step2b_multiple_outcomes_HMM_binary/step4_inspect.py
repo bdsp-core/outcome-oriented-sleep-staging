@@ -43,15 +43,10 @@ def main():
     Z = np.argmax(Zp, axis=1)
     n_state = Zp.shape[1]
     print(f'n_state = {n_state}')
-    for i in range(n_state):
-        cc = (Z==i).sum()
-        suffix = '' if cc>=1000 else ' !!'
-        print(f'Count(Z={i+1}) = {cc}{suffix}')
 
     outcomes = res['outcomes']
     yte = res['yte']
-    #TODO ypte = res['ypte']
-    ypte = res['yp_final_train']
+    ypte = res['ypte']
     for yi, ycol in enumerate(outcomes):
         ids = ~np.isnan(yte[:,yi])
         auc = roc_auc_score(yte[ids][:,yi], ypte[ids][:,yi])

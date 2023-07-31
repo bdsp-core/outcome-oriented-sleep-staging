@@ -1,3 +1,7 @@
+- use Gaussian emission for continuous variable
+- make sure constraint to REM/NREM/W
+
+
 - visualize detected spindles
 - validate SW detection
 - validate REM detection

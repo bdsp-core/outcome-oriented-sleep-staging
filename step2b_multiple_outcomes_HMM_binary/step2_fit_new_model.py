@@ -53,6 +53,9 @@ def main():
     N = len(Y)
     print(f'N = {N}')
     print(f'Xnames = {Xnames}')
+
+    sleep_stages = df_feat.SleepStage.values
+    sleep_stages = [sleep_stages[sids==sid] for sid in unique_sids]
     
     ## get CV split
     
@@ -198,9 +201,10 @@ def main():
             log_dir=log_folder)
     X2 = [X[sids==sid] for sid in unique_sids]
     model_final.fit(X2, Y)
+    model_final.postprocess_states(X2, [sleep_stages[sids==sid] for sid in unique_sids], good_state_thres=1800/epoch_time)
     Zp = model_final.predict_proba_Z(X2)
     yp_final_train = model_final.predict_proba(X2)#[:,1]
-    
+
     os.makedirs(result_folder, exist_ok=True)
     with open(os.path.join(result_folder, f'results.pickle'), 'wb') as ff:
         pickle.dump({

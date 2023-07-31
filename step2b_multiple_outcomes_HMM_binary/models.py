@@ -4,7 +4,7 @@ import shutil
 import numpy as np
 from tqdm import tqdm
 from sklearn.base import BaseEstimator, ClassifierMixin
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, confusion_matrix
 from scipy.special import expit as sigmoid
 import torch as th
 from torch import nn
@@ -235,8 +235,10 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
             #zp = self._viterbi(X01, T, log_state_priors, log_transition_matrix, log_emission_matrix)
             #zp_hist = th.vstack([th.bincount(z, minlength=self.n_components)/len(z) for z in zp])
             zp = self._get_z_log_probs(Xpl_01, T, log_alpha, log_transition_matrix, log_emission_matrix)
+            #TODO change z.mean to z.sum
             zp_hist = th.vstack([z.mean(dim=0) for z in zp])
             zp_hist = zp_hist[:,:-1]
+            #TODO add flattened transition matrix to prediction of H
             H = th.matmul(zp_hist, self.coef_th_)+self.intercept_th_
             res.append(H)
             res.append(zp)
@@ -432,6 +434,8 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
         else:
             self.mytrainer = self._get_trainer()
             self.mytrainer.fit(model=self, train_dataloaders=loader_tr, val_dataloaders=loader_va)
+
+        #TODO fit machine learning version of HMM(X) to Y
         
         # post-processing, get params in interpretable numpy format
         if type(self.thres_bounds)==th.Tensor:
@@ -449,6 +453,40 @@ class HMMOOSSClassifier(BaseEstimator, ClassifierMixin, LightningModule):
         self.intercept_ = th2np(self.intercept_th_)
             
         return self
+
+    #TODO
+    def postprocess_states(self, X, sleep_stages, good_state_thres=60):
+        """
+        re-arange states by it's association with AASM stages
+        X: list
+        sleep_stages: list
+        """
+        Zp = self.predict_proba_Z(X)
+
+        # remove uncommon states
+        n_state = Zp.shape[1]
+        Z = np.argmax(np.concatenate(Zp,axis=0), axis=1)
+        good_states = [i for i in range(n_state) if (Z==i).sum()>=good_state_thres]
+        transmat = self.transmat_[good_state][:,good_states]
+        transmat = transmat/transmat.sum(axis=1, keepdims=True)
+        emission = self.emissionprob_[good_states]
+        self.set_transmat(transmat)
+        self.set_emission(emission)
+
+        # re-arange
+        Zp = self.predict_proba_Z(X)
+        Z = np.argmax(np.concatenate(Zp,axis=0), axis=1)
+        ss = np.concatenate(sleep_stages,axis=0)-1
+        ids = pd.notna(Z)&pd.notna(ss)
+        cf = confusion_matrix(Z[ids], ss[ids])
+        cf = cf[:,:5]
+        sort_val1 = np.argmax(cf,axis=1)
+        sort_val2 = cf[range(len(cf)), sort_val1]
+        new_states = np.lexsort((sort_val2, sort_val1))
+        transmat = transmat[new_states][:,new_states]
+        emission = emission[new_states]
+        self.set_transmat(transmat)
+        self.set_emission(emission)
         
     def decision_function(self, X, return_z=False):
         X = [(x-self.Xmean_)/self.Xscale_ for x in X]
