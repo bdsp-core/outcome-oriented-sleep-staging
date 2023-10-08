@@ -35,7 +35,7 @@ def main():
     result_folder = f'results_new_{outcome}_epoch{epoch_time}s'
     os.makedirs(result_folder, exist_ok=True)
     
-    df_feat = pd.read_csv(f'features_epoch{epoch_time}s.csv.zip')
+    df_feat = pd.read_csv(f'../data/features_epoch{epoch_time}s.csv.zip')
     unique_sids = df_feat.HashID.unique()
     sids = df_feat.HashID.values
     Xnames = list(df_feat.columns)
@@ -52,7 +52,7 @@ def main():
     
     ## get CV split
     
-    cv_path = f'cv_split_{outcome}_N={N}_epochtime{epoch_time}s_seed{random_state}.csv'
+    cv_path = f'cv_split_{outcome}_N={N}_seed{random_state}.csv'
     if os.path.exists(cv_path):
         df_cv = pd.read_csv(cv_path)
         print(f'CV assignment is read from {cv_path}')
